@@ -12,6 +12,8 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public Fellowship Fellowship;
 
+        public bool FellowVitalUpdate;
+
         // todo: Figure out if this is the best place to do this, and whether there are concurrency issues associated with it.
         public void FellowshipCreate(string fellowshipName, bool shareXP)
         {
@@ -26,12 +28,14 @@ namespace ACE.Server.WorldObjects
 
         public void FellowshipQuit(bool disband)
         {
-            Fellowship.QuitFellowship(this, disband);
-            Fellowship = null;
+            if (Fellowship != null)
+                Fellowship.QuitFellowship(this, disband);
         }
 
         public void FellowshipDismissPlayer(Player player)
         {
+            if (Fellowship == null) return;
+
             if (Guid.Full == Fellowship.FellowshipLeaderGuid)
                 Fellowship.RemoveFellowshipMember(player);
             else
@@ -40,6 +44,8 @@ namespace ACE.Server.WorldObjects
 
         public void FellowshipRecruit(Player newPlayer)
         {
+            if (newPlayer == null) return;
+
             if (newPlayer.GetCharacterOption(CharacterOption.IgnoreFellowshipRequests))
             {
                 Session.Network.EnqueueSend(new GameMessageSystemChat($"{newPlayer.Name} is not accepting fellowing requests.", ChatMessageType.Fellowship));
@@ -55,6 +61,9 @@ namespace ACE.Server.WorldObjects
 
         public void FellowshipNewLeader(Player newLeader)
         {
+            if (Fellowship == null || newLeader == null)
+                return;
+
             Fellowship.AssignNewLeader(newLeader);
         }
     }

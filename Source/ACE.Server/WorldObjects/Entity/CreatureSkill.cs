@@ -99,17 +99,7 @@ namespace ACE.Server.WorldObjects.Entity
                 total += InitLevel + Ranks;
 
                 if (creature is Player player)
-                {
-                    if (player.AugmentationJackOfAllTrades != 0)
-                        total += (uint)(player.AugmentationJackOfAllTrades * 5);
-
-                    if (player.AugmentationSkilledMelee > 0 && Player.MeleeSkills.Contains(Skill))
-                        total += (uint)(player.AugmentationSkilledMelee * 10);
-                    else if (player.AugmentationSkilledMissile > 0 && Player.MissileSkills.Contains(Skill))
-                        total += (uint)(player.AugmentationSkilledMissile * 10);
-                    else if (player.AugmentationSkilledMagic > 0 && Player.MagicSkills.Contains(Skill))
-                        total += (uint)(player.AugmentationSkilledMagic * 10);
-                }
+                    total += GetAugBonus(player, false);
 
                 return total;
             }
@@ -126,9 +116,6 @@ namespace ACE.Server.WorldObjects.Entity
 
                 total += InitLevel + Ranks;
 
-                var skillMod = creature.EnchantmentManager.GetSkillMod(Skill);
-                total += (uint)skillMod;    // can be negative?
-
                 if (creature is Player player)
                 {
                     var vitae = player.Vitae;
@@ -137,32 +124,54 @@ namespace ACE.Server.WorldObjects.Entity
                         total = (uint)(total * vitae).Round();
 
                     // it seems this gets applied after vitae?
-                    if (player.AugmentationJackOfAllTrades != 0)
-                        total += (uint)(player.AugmentationJackOfAllTrades * 5);
-
-                    if (player.AugmentationSkilledMelee > 0 && Player.MeleeSkills.Contains(Skill))
-                        total += (uint)(player.AugmentationSkilledMelee * 10);
-                    else if (player.AugmentationSkilledMissile > 0 && Player.MissileSkills.Contains(Skill))
-                        total += (uint)(player.AugmentationSkilledMissile * 10);
-                    else if (player.AugmentationSkilledMagic > 0 && Player.MagicSkills.Contains(Skill))
-                        total += (uint)(player.AugmentationSkilledMagic * 10);
+                    total += GetAugBonus(player, true);
                 }
+
+                var skillMod = creature.EnchantmentManager.GetSkillMod(Skill);
+                total += (uint)skillMod;    // can be negative?
 
                 return total;
             }
         }
 
-        public double GetPercentSuccess(uint difficulty)
+        public uint GetAugBonus(Player player, bool current)
         {
-            return GetPercentSuccess(Current, difficulty);
-        }
+            // TODO: verify which of these are base, and which are current
+            uint total = 0;
 
-        public static double GetPercentSuccess(uint skillLevel, uint difficulty)
-        {
-            float delta = skillLevel - difficulty;
-            var scalar = 1d + Math.Pow(Math.E, 0.03 * delta);
-            var percentSuccess = 1d - (1d / scalar);
-            return percentSuccess;
+            if (current && player.AugmentationJackOfAllTrades != 0)
+                total += (uint)(player.AugmentationJackOfAllTrades * 5);
+
+            if (player.LumAugAllSkills != 0)
+                total += (uint)player.LumAugAllSkills;
+
+            if (player.AugmentationSkilledMelee > 0 && Player.MeleeSkills.Contains(Skill))
+                total += (uint)(player.AugmentationSkilledMelee * 10);
+            else if (player.AugmentationSkilledMissile > 0 && Player.MissileSkills.Contains(Skill))
+                total += (uint)(player.AugmentationSkilledMissile * 10);
+            else if (player.AugmentationSkilledMagic > 0 && Player.MagicSkills.Contains(Skill))
+                total += (uint)(player.AugmentationSkilledMagic * 10);
+
+            switch (Skill)
+            {
+                case Skill.ArmorTinkering:
+                case Skill.ItemTinkering:
+                case Skill.MagicItemTinkering:
+                case Skill.WeaponTinkering:
+                case Skill.Salvaging:
+
+                    if (player.LumAugSkilledCraft != 0)
+                        total += (uint)player.LumAugSkilledCraft;
+                    break;
+            }
+
+            if (AdvancementClass == SkillAdvancementClass.Specialized && player.LumAugSkilledSpec != 0)
+                total += (uint)player.LumAugSkilledSpec * 2;
+
+            if (player.Enlightenment != 0)
+                total += (uint)player.Enlightenment;
+
+            return total;
         }
 
         /// <summary>

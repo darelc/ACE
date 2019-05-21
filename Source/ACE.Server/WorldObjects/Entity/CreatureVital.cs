@@ -76,7 +76,7 @@ namespace ACE.Server.WorldObjects.Entity
         {
             get
             {
-                var attr = AttributeFormula.GetFormula(creature, Vital);
+                var attr = AttributeFormula.GetFormula(creature, Vital, false);
 
                 return StartingValue + Ranks + attr;
             }
@@ -92,10 +92,14 @@ namespace ACE.Server.WorldObjects.Entity
         {
             get
             {
-                uint total = Base;
+                var attr = AttributeFormula.GetFormula(creature, Vital, true);
 
-                // TODO: include all buffs
-                total += (uint)Math.Round(creature.EnchantmentManager.GetVitalMod(this));
+                uint total = StartingValue + Ranks + attr;
+
+                var multiplier = creature.EnchantmentManager.GetVitalMod_Multiplier(this);
+                var additives = creature.EnchantmentManager.GetVitalMod_Additives(this);
+
+                total = (uint)Math.Round(total * multiplier + additives);
 
                 if (creature is Player player)
                 {

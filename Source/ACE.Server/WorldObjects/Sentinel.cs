@@ -15,7 +15,11 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public Sentinel(Weenie weenie, ObjectGuid guid, uint accountId) : base(weenie, guid, accountId)
         {
-            Character.IsPlussed = true;
+            if (!Character.IsPlussed)
+            {
+                Character.IsPlussed = true;
+                CharacterChangesDetected = true;
+            }
 
             SetEphemeralValues();
         }
@@ -25,6 +29,12 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public Sentinel(Biota biota, IEnumerable<Biota> inventory, IEnumerable<Biota> wieldedItems, Character character, Session session) : base(biota, inventory, wieldedItems, character, session)
         {
+            if (!Character.IsPlussed)
+            {
+                Character.IsPlussed = true;
+                CharacterChangesDetected = true;
+            }
+
             SetEphemeralValues();
         }
 
@@ -32,12 +42,22 @@ namespace ACE.Server.WorldObjects
         {
             BaseDescriptionFlags |= ObjectDescriptionFlag.Admin;
 
+            if (!ChannelsAllowed.HasValue)
+                ChannelsAllowed = Channel.Audit | Channel.Advocate1 | Channel.Advocate2 | Channel.Advocate3 | Channel.Sentinel | Channel.AllBroadcast;
+            else
+                ChannelsAllowed |= Channel.Audit | Channel.Advocate1 | Channel.Advocate2 | Channel.Advocate3 | Channel.Sentinel | Channel.AllBroadcast;
+        }
+
+        public override void InitPhysicsObj()
+        {
+            base.InitPhysicsObj();
+
             switch (CloakStatus)
             {
                 case ACE.Entity.Enum.CloakStatus.Off:
                     goto default;
                 case ACE.Entity.Enum.CloakStatus.On:
-                    Translucency = 0.5f;
+                    //Translucency = 0.5f;
                     Cloaked = true;
                     Ethereal = true;
                     NoDraw = true;
@@ -46,6 +66,7 @@ namespace ACE.Server.WorldObjects
                 case ACE.Entity.Enum.CloakStatus.Player:
                     goto default;
                 case ACE.Entity.Enum.CloakStatus.Creature:
+                    Attackable = true;
                     goto default;
                 default:
                     Translucency = null;
@@ -55,18 +76,6 @@ namespace ACE.Server.WorldObjects
                     Visibility = false;
                     break;
             }
-        }
-
-        public override string Name
-        {
-            get
-            {
-                if ((CloakStatus ?? ACE.Entity.Enum.CloakStatus.Undef) >= ACE.Entity.Enum.CloakStatus.Player)
-                    return base.Name;
-                else
-                    return "+" + base.Name;
-            }
-            //set => SetProperty(PropertyString.Name, value);
         }
     }
 }

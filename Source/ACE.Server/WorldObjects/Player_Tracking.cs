@@ -4,6 +4,8 @@ using System.Linq;
 
 using ACE.Entity;
 using ACE.Entity.Enum;
+using ACE.Server.Entity;
+using ACE.Server.Entity.Actions;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.Physics.Common;
 
@@ -53,17 +55,19 @@ namespace ACE.Server.WorldObjects
                 return;
 
             // If Visibility is true, do not send object to client, object is meant for server side only, unless Adminvision is true.
-            if (worldObject.Visibility && !Adminvision)
-                return;
+            if (!worldObject.Visibility)
+                Session.Network.EnqueueSend(new GameMessageCreateObject(worldObject, Adminvision, Adminvision));
+            else if (worldObject.Visibility && Adminvision)
+                Session.Network.EnqueueSend(new GameMessageCreateObject(worldObject, Adminvision, Adminvision));
 
             //Console.WriteLine($"Player {Name} - TrackObject({worldObject.Name})");
-            Session.Network.EnqueueSend(new GameMessageCreateObject(worldObject));
 
             // add creature equipped objects / wielded items
             if (worldObject is Creature creature)
             {
                 foreach (var wieldedItem in creature.EquippedObjects.Values)
-                    TrackEquippedObject(creature, wieldedItem);
+                    if (IsInChildLocation(wieldedItem))
+                        TrackEquippedObject(creature, wieldedItem);
             }
         }
 
@@ -112,7 +116,7 @@ namespace ACE.Server.WorldObjects
             //Console.WriteLine($"Player {Name} - TrackEquippedObject({wieldedItem.Name}) on Wielder {wielder.Name}");
 
             // We make sure the item is actually wielded and selectable
-            if ((wieldedItem.CurrentWieldedLocation ?? 0 & EquipMask.Selectable) == 0)
+            if ((wieldedItem.CurrentWieldedLocation ?? 0 & EquipMask.SelectablePlusAmmo) == 0)
                 return;
 
             // The wielder already knows about this object
@@ -127,17 +131,88 @@ namespace ACE.Server.WorldObjects
             //Console.WriteLine($"Player {Name} - RemoveTrackedEquippedObject({worldObject.Name}) on Former Wielder {formerWielder.Name}");
 
             // We don't need to remove objects that couldn't have been tracked in the first place
-            if ((worldObject.ValidLocations ?? 0 & EquipMask.Selectable) == 0)
+            if ((worldObject.ValidLocations ?? 0 & EquipMask.SelectablePlusAmmo) == 0)
                 return;
 
             // The former wielder already knows about this object was removed
             if (formerWielder == this)
                 return;
 
+            // intended for cloaked objects, as DO's should not be sent for them
+            // but this breaks regular players, as the state of worldObject has already changed, and is never in a ChildLocation
+            //if (!IsInChildLocation(worldObject))
+                //return;
+
             // todo: Until we can fix the tracking system better, sending the PickupEvent like retail causes weapon dissapearing bugs on relog
             //Session.Network.EnqueueSend(new GameMessagePickupEvent(worldObject));
 
             Session.Network.EnqueueSend(new GameMessageDeleteObject(worldObject));
+        }
+
+        public void DeCloak()
+        {
+            if (CloakStatus == ACE.Entity.Enum.CloakStatus.Off)
+                return;
+
+            var actionChain = new ActionChain();
+
+            actionChain.AddAction(this, () =>
+            {
+                EnqueueBroadcast(false, new GameMessageDeleteObject(this));
+            });
+            actionChain.AddAction(this, () =>
+            {
+                NoDraw = true;
+                EnqueueBroadcastPhysicsState();
+                Visibility = false;
+            });
+            actionChain.AddDelaySeconds(.5);
+            actionChain.AddAction(this, () =>
+            {
+                EnqueueBroadcast(false, new GameMessageCreateObject(this));
+            });
+            actionChain.AddDelaySeconds(.5);
+            actionChain.AddAction(this, () =>
+            {
+                Cloaked = false;
+                Ethereal = false;
+                NoDraw = false;
+                EnqueueBroadcastPhysicsState();
+            });
+
+            actionChain.EnqueueChain();
+        }
+
+        public void Cloak()
+        {
+            if (CloakStatus == ACE.Entity.Enum.CloakStatus.On)
+                return;
+
+            var actionChain = new ActionChain();
+
+            actionChain.AddAction(this, () =>
+            {
+                Cloaked = true;
+                Ethereal = true;
+                NoDraw = true;
+                EnqueueBroadcastPhysicsState();
+            });
+            actionChain.AddAction(this, () =>
+            {
+                EnqueueBroadcast(false, new GameMessageDeleteObject(this));
+            });
+            actionChain.AddDelaySeconds(.5);
+            actionChain.AddAction(this, () =>
+            {
+                Visibility = true;
+            });
+            actionChain.AddDelaySeconds(.5);
+            actionChain.AddAction(this, () =>
+            {
+                EnqueueBroadcast(false, new GameMessageCreateObject(this, true, true));
+            });
+
+            actionChain.EnqueueChain();
         }
     }
 }

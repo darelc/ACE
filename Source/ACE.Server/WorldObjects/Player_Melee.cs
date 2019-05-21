@@ -163,7 +163,12 @@ namespace ACE.Server.WorldObjects
                 numStrikes = attackFrames.Count;
             }
 
+            // handle self-procs
+            TryProcEquippedItems(this, true);
+
             var prevTime = 0.0f;
+            bool targetProc = false;
+
             for (var i = 0; i < numStrikes; i++)
             {
                 // are there animation hooks for damage frames?
@@ -174,13 +179,22 @@ namespace ACE.Server.WorldObjects
 
                 actionChain.AddAction(this, () =>
                 {
-                    DamageTarget(creature, weapon);
+                    var damageEvent = DamageTarget(creature, weapon);
+
+                    // handle target procs
+                    if (damageEvent != null && damageEvent.HasDamage && !targetProc)
+                    {
+                        TryProcEquippedItems(creature, false);
+                        targetProc = true;
+                    }
 
                     if (weapon != null && weapon.IsCleaving)
                     {
                         var cleave = GetCleaveTarget(creature, weapon);
                         foreach (var cleaveHit in cleave)
                             DamageTarget(cleaveHit, weapon);
+
+                        // target procs don't happen for cleaving
                     }
                 });
 
@@ -268,7 +282,7 @@ namespace ACE.Server.WorldObjects
                         var weapon = GetEquippedMeleeWeapon();
                         var attackType = GetWeaponAttackType(weapon);
 
-                        var action = PowerLevel < 0.33f && attackType.HasFlag(AttackType.Thrust) ? "Thrust" : "Slash";
+                        var action = PowerLevel < 0.33f && attackType.HasFlag(AttackType.Thrust) || !attackType.HasFlag(AttackType.Slash) ? "Thrust" : "Slash";
 
                         // handle multistrike weapons
                         action = MultiStrike(attackType, action);
@@ -309,15 +323,6 @@ namespace ACE.Server.WorldObjects
                         return motion;
                     }
             }
-        }
-
-        public bool IsMeleeDistance(WorldObject target)
-        {
-            // always use spheres?
-            var cylDist = (float)Physics.Common.Position.CylinderDistance(PhysicsObj.GetRadius(), PhysicsObj.GetHeight(), PhysicsObj.Position,
-                target.PhysicsObj.GetRadius(), target.PhysicsObj.GetHeight(), target.PhysicsObj.Position);
-
-            return cylDist <= 0.6f;
         }
 
         public bool IsStickyDistance(WorldObject target)

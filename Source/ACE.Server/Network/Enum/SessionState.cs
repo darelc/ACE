@@ -1,4 +1,4 @@
-﻿namespace ACE.Server.Network.Enum
+namespace ACE.Server.Network.Enum
 {
     public enum SessionState
     {
@@ -6,6 +6,6 @@
         AuthConnectResponse,
         AuthConnected,
         WorldConnected,
-        NetworkTimeout
+        TerminationStarted,
     }
 }

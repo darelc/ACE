@@ -41,12 +41,16 @@ namespace ACE.Server.WorldObjects
 
         public override ActivationResult CheckUseRequirements(WorldObject activator)
         {
+            var baseRequirements = base.CheckUseRequirements(activator);
+            if (!baseRequirements.Success)
+                return baseRequirements;
+
             if (!(activator is Player player))
                 return new ActivationResult(false);
 
             if (!House.RootHouse.HasPermission(player, true))
             {
-                player.Session.Network.EnqueueSend(new GameEventCommunicationTransientString(player.Session, $"The {Name} is locked!"));
+                player.Session.Network.EnqueueSend(new GameEventCommunicationTransientString(player.Session, $"You do not have permission to access {Name}"));
                 EnqueueBroadcast(new GameMessageSound(Guid, Sound.OpenFailDueToLock, 1.0f));
                 return new ActivationResult(false);
             }

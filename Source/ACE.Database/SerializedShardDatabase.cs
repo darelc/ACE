@@ -309,6 +309,21 @@ namespace ACE.Database
             }));
         }
 
+        public List<Character> GetCharacters(uint accountId, bool includeDeleted)
+        {
+            return _wrappedDatabase.GetCharacters(accountId, includeDeleted);
+        }
+
+        public Character GetCharacterByName(string name)
+        {
+            return _wrappedDatabase.GetCharacterByName(name);
+        }
+
+        public Character GetCharacterByGuid(uint guid)
+        {
+            return _wrappedDatabase.GetCharacterByGuid(guid);
+        }
+
         public void SaveCharacter(Character character, ReaderWriterLockSlim rwLock, Action<bool> callback)
         {
             _queue.Add(new Task(() =>
@@ -356,11 +371,6 @@ namespace ACE.Database
         // ******************************************************************* OLD CODE BELOW ********************************
         // ******************************************************************* OLD CODE BELOW ********************************
         // ******************************************************************* OLD CODE BELOW ********************************
-
-        public void RenameCharacter(string currentName, string newName, Action<uint> callback)
-        {
-            throw new NotImplementedException();
-        }
 
         public void SetCharacterAccessLevelByName(string name, AccessLevel accessLevel, Action<uint> callback)
         {

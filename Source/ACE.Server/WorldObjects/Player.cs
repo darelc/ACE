@@ -4,6 +4,7 @@ using System.Linq;
 
 using log4net;
 
+using ACE.Database.Models.Auth;
 using ACE.Database.Models.Shard;
 using ACE.Database.Models.World;
 using ACE.DatLoader;
@@ -22,12 +23,15 @@ using ACE.Server.Physics.Animation;
 using ACE.Server.Physics.Common;
 
 using MotionTable = ACE.DatLoader.FileTypes.MotionTable;
+using ACE.Database;
 
 namespace ACE.Server.WorldObjects
 {
     public partial class Player : Creature, IPlayer
     {
         private static readonly ILog log = LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
+        public Account Account { get; }
 
         public Character Character { get; }
 
@@ -36,6 +40,7 @@ namespace ACE.Server.WorldObjects
         public QuestManager QuestManager;
 
         public bool LastContact = true;
+        public bool IsJumping = false;
 
         public SquelchDB Squelches;
 
@@ -49,6 +54,8 @@ namespace ACE.Server.WorldObjects
             Character.AccountId = accountId;
             Character.Name = GetProperty(PropertyString.Name);
             CharacterChangesDetected = true;
+
+            Account = DatabaseManager.Authentication.GetAccountById(Character.AccountId);
 
             SetEphemeralValues();
 
@@ -69,6 +76,8 @@ namespace ACE.Server.WorldObjects
             Character = character;
             Session = session;
 
+            Account = DatabaseManager.Authentication.GetAccountById(Character.AccountId);
+
             SetEphemeralValues();
 
             SortBiotasIntoInventory(inventory);
@@ -83,8 +92,6 @@ namespace ACE.Server.WorldObjects
 
             // set pink bubble state
             IgnoreCollisions = true; ReportCollisions = false; Hidden = true;
-
-            PhysicsObj.SetPlayer();
         }
 
         private void SetEphemeralValues()
@@ -115,7 +122,7 @@ namespace ACE.Server.WorldObjects
                 //    character.IsAdvocate= true;
             }
 
-            ContainerCapacity = 7;
+            ContainerCapacity = (byte)(7 + AugmentationExtraPackSlot);
 
             if (Session != null && AdvocateQuest && IsAdvocate) // Advocate permissions are per character regardless of override
             {
@@ -176,100 +183,8 @@ namespace ACE.Server.WorldObjects
             // IsAlive = true;
         }
 
-        /// <summary>
-        /// Called every ~5 secs for equipped mana consuming items
-        /// </summary>
-        public void ManaConsumersTick()
-        {
-            if (EquippedObjectsLoaded)
-            {
-                var EquippedManaConsumers = EquippedObjects.Where(k =>
-                    (k.Value.IsAffecting ?? false) &&
-                    k.Value.ManaRate.HasValue &&
-                    k.Value.ItemMaxMana.HasValue &&
-                    k.Value.ItemCurMana.HasValue &&
-                    k.Value.ItemCurMana.Value > 0).ToList();
-
-                EquippedManaConsumers.ForEach(k =>
-                {
-                    var item = k.Value;
-                    var rate = item.ManaRate.Value;
-                    if (!item.ItemManaConsumptionTimestamp.HasValue) item.ItemManaConsumptionTimestamp = DateTime.Now;
-                    DateTime mostRecentBurn = item.ItemManaConsumptionTimestamp.Value;
-
-                    var timePerBurn = -1 / rate;
-
-                    var secondsSinceLastBurn = (DateTime.Now - mostRecentBurn).TotalSeconds;
-
-                    var delta = secondsSinceLastBurn / timePerBurn;
-
-                    var deltaChopped = (int)Math.Floor(delta);
-                    var deltaExtra = delta - deltaChopped;
-
-                    if (deltaChopped > 0)
-                    {
-                        var timeToAdd = (int)Math.Floor(deltaChopped * timePerBurn);
-                        item.ItemManaConsumptionTimestamp = mostRecentBurn + new TimeSpan(0, 0, timeToAdd);
-                        var manaToBurn = Math.Min(item.ItemCurMana.Value, deltaChopped);
-                        deltaChopped = Math.Clamp(deltaChopped, 0, 10);
-                        item.ItemCurMana -= deltaChopped;
-
-                        if (item.ItemCurMana < 1 || item.ItemCurMana == null)
-                        {
-                            item.IsAffecting = false;
-                            var msg = new GameMessageSystemChat($"Your {item.Name} is out of Mana.", ChatMessageType.Magic);
-                            var sound = new GameMessageSound(Guid, Sound.ItemManaDepleted);
-                            Session.Network.EnqueueSend(msg, sound);
-                            if (item.WielderId != null)
-                            {
-                                if (item.Biota.BiotaPropertiesSpellBook != null)
-                                {
-                                    // unsure if these messages / sounds were ever sent in retail,
-                                    // or if it just purged the enchantments invisibly
-                                    // doing a delay here to prevent 'SpellExpired' sounds from overlapping with 'ItemManaDepleted'
-                                    var actionChain = new ActionChain();
-                                    actionChain.AddDelaySeconds(2.0f);
-                                    actionChain.AddAction(this, () =>
-                                    {
-                                        for (int i = 0; i < item.Biota.BiotaPropertiesSpellBook.Count; i++)
-                                        {
-                                            RemoveItemSpell(item, (uint)item.Biota.BiotaPropertiesSpellBook.ElementAt(i).Spell);
-                                        }
-                                    });
-                                    actionChain.EnqueueChain();
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // get time until empty
-                            var secondsUntilEmpty = ((item.ItemCurMana - deltaExtra) * timePerBurn);
-                            if (secondsUntilEmpty <= 120 && (!item.ItemManaDepletionMessageTimestamp.HasValue || (DateTime.Now - item.ItemManaDepletionMessageTimestamp.Value).TotalSeconds > 120))
-                            {
-                                item.ItemManaDepletionMessageTimestamp = DateTime.Now;
-                                Session.Network.EnqueueSend(new GameMessageSystemChat($"Your {item.Name} is low on Mana.", ChatMessageType.Magic));
-                            }
-                        }
-                    }
-                });
-            }
-        }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        public bool IsDeleted => Character.IsDeleted;
+        public bool IsPendingDeletion => Character.DeleteTime > 0 && !IsDeleted;
 
 
         // ******************************************************************* OLD CODE BELOW ********************************
@@ -321,8 +236,8 @@ namespace ACE.Server.WorldObjects
             var wo = FindObject(objectGuid, SearchLocations.Everywhere, out _, out _, out _);
             if (wo == null)
             {
-                log.Warn($"{Name}.ExamineObject({objectGuid:X8}): couldn't find object");
-                SendUseDoneEvent();
+                log.Debug($"{Name}.ExamineObject({objectGuid:X8}): couldn't find object");
+                Session.Network.EnqueueSend(new GameEventIdentifyObjectResponse(Session, objectGuid));
                 return;
             }
 
@@ -346,13 +261,22 @@ namespace ACE.Server.WorldObjects
                 var currentSkill = (int)GetCreatureSkill(skill).Current;
                 int difficulty = (int)creature.GetCreatureSkill(Skill.Deception).Current;
 
+                if (PropertyManager.GetBool("assess_creature_mod").Item && skill == Skill.AssessCreature
+                        && Skills[Skill.AssessCreature].AdvancementClass < SkillAdvancementClass.Trained)
+                    currentSkill = (int)((Focus.Current + Self.Current) / 2);
+
                 var chance = SkillCheck.GetSkillChance(currentSkill, difficulty);
 
-                if (difficulty == 0 || player != null && !player.GetCharacterOption(CharacterOption.AttemptToDeceiveOtherPlayers))
+                if (difficulty == 0 || player != null && (!player.GetCharacterOption(CharacterOption.AttemptToDeceiveOtherPlayers) || player == this
+                    || ((this is Admin || this is Sentinel) && CloakStatus.HasValue && CloakStatus.Value == ACE.Entity.Enum.CloakStatus.On)))
                     chance = 1.0f;
 
                 success = chance >= ThreadSafeRandom.Next(0.0f, 1.0f);
             }
+
+            if (creature is Pet || creature is CombatPet)
+                success = true;
+
             Session.Network.EnqueueSend(new GameEventIdentifyObjectResponse(Session, obj, success));
 
             if (!success && player != null)
@@ -390,8 +314,8 @@ namespace ACE.Server.WorldObjects
 
         public override void OnCollideObjectEnd(WorldObject target)
         {
-            if (target is Hotspot)
-                (target as Hotspot).OnCollideObjectEnd(this);
+            if (target is Hotspot hotspot)
+                hotspot.OnCollideObjectEnd(this);
         }
 
         public void HandleActionQueryHealth(uint objectGuid)
@@ -464,7 +388,9 @@ namespace ACE.Server.WorldObjects
             var book = FindObject(new ObjectGuid(bookGuid), SearchLocations.MyInventory, out var container, out var rootOwner, out var wasEquipped) as Book;
             if (book == null) return;
 
-            book.ModifyPage(pageId, pageText);
+            var success = book.ModifyPage(pageId, pageText, this);
+
+            Session.Network.EnqueueSend(new GameEventBookModifyPageResponse(Session, bookGuid, pageId, true));
         }
 
         public void HandleActionBookDeletePage(uint bookGuid, uint pageId)
@@ -473,7 +399,7 @@ namespace ACE.Server.WorldObjects
             var book = FindObject(new ObjectGuid(bookGuid), SearchLocations.MyInventory, out var container, out var rootOwner, out var wasEquipped) as Book;
             if (book == null) return;
 
-            var success = book.DeletePage(pageId);
+            var success = book.DeletePage(pageId, this);
 
             Session.Network.EnqueueSend(new GameEventBookDeletePageResponse(Session, bookGuid, pageId, success));
         }
@@ -518,6 +444,14 @@ namespace ACE.Server.WorldObjects
             if (Fellowship != null)
                 FellowshipQuit(false);
 
+            if (IsTrading && TradePartner != null)
+            {
+                var tradePartner = PlayerManager.GetOnlinePlayer(TradePartner);
+
+                if (tradePartner != null)
+                    tradePartner.HandleActionCloseTradeNegotiations(tradePartner.Session);                
+            }
+
             if (!clientSessionTerminatedAbruptly)
             {
                 // Thie retail server sends a ChatRoomTracker 0x0295 first, then the status message, 0x028B. It does them one at a time for each individual channel.
@@ -529,6 +463,9 @@ namespace ACE.Server.WorldObjects
                 var roleplay = new GameEventWeenieErrorWithString(Session, WeenieErrorWithString.YouHaveLeftThe_Channel, "Roleplay");
                 Session.Network.EnqueueSend(general, trade, lfg, roleplay);
             }
+
+            if (CurrentActiveCombatPet != null)
+                CurrentActiveCombatPet.Destroy();
 
             if (CurrentLandblock != null)
             {
@@ -546,14 +483,20 @@ namespace ACE.Server.WorldObjects
                 // remove the player from landblock management -- after the animation has run
                 logoutChain.AddAction(this, () =>
                 {
-                    if (PlayerKillerStatus == PlayerKillerStatus.PKLite)
-                        PlayerKillerStatus = PlayerKillerStatus.NPK;
-
                     CurrentLandblock?.RemoveWorldObject(Guid, false);
                     SetPropertiesAtLogOut();
                     SavePlayerToDatabase();
                     PlayerManager.SwitchPlayerFromOnlineToOffline(this);
                 });
+
+                // close any open landblock containers (chests / corpses)
+                if (LastOpenedContainerId != ObjectGuid.Invalid)
+                {
+                    var container = CurrentLandblock.GetObject(LastOpenedContainerId) as Container;
+
+                    if (container != null)
+                        container.Close(this);
+                }
 
                 logoutChain.EnqueueChain();
             }
@@ -660,6 +603,7 @@ namespace ACE.Server.WorldObjects
 
             // Broadcast updated character appearance
             EnqueueBroadcast(new GameMessageObjDescEvent(this));
+            BarberActive = false;
         }
 
         /// <summary>
@@ -673,7 +617,7 @@ namespace ACE.Server.WorldObjects
                 log.Debug($"HandleActionForceObjDescSend() - couldn't find object {itemGuid:X8}");
                 return;
             }
-            EnqueueBroadcast(new GameMessageObjDescEvent(wo));
+            Session.Network.EnqueueSend(new GameMessageObjDescEvent(wo));
         }
 
 
@@ -807,17 +751,44 @@ namespace ACE.Server.WorldObjects
 
         public void HandleActionTalk(string message)
         {
-            EnqueueBroadcast(new GameMessageCreatureMessage(message, Name, Guid.Full, ChatMessageType.Speech), LocalBroadcastRange, true);
+            if (!IsGagged)
+                EnqueueBroadcast(new GameMessageCreatureMessage(message, Name, Guid.Full, ChatMessageType.Speech), LocalBroadcastRange, true);
+            else
+                SendGagError();
+        }
+
+        public void SendGagError()
+        {
+            var msg = "You are unable to talk locally, globally, or send tells because you have been gagged.";
+            Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, msg), new GameMessageSystemChat(msg,ChatMessageType.WorldBroadcast));
+        }
+
+        public void SendGagNotice()
+        {
+            var msg = "Your chat privileges have been suspended.";
+            Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, msg), new GameMessageSystemChat(msg, ChatMessageType.WorldBroadcast));
+        }
+
+        public void SendUngagNotice()
+        {
+            var msg = "Your chat privileges have been restored.";
+            Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, msg), new GameMessageSystemChat(msg, ChatMessageType.WorldBroadcast));
         }
 
         public void HandleActionEmote(string message)
         {
-            EnqueueBroadcast(new GameMessageEmoteText(Guid.Full, Name, message), LocalBroadcastRange);
+            if (!IsGagged)
+                EnqueueBroadcast(new GameMessageEmoteText(Guid.Full, Name, message), LocalBroadcastRange);
+            else
+                SendGagError();
         }
 
         public void HandleActionSoulEmote(string message)
         {
-            EnqueueBroadcast(new GameMessageSoulEmote(Guid.Full, Name, message), LocalBroadcastRange);
+            if (!IsGagged)
+                EnqueueBroadcast(new GameMessageSoulEmote(Guid.Full, Name, message), LocalBroadcastRange);
+            else
+                SendGagError();
         }
 
         public void HandleActionJump(JumpPack jump)
@@ -829,16 +800,36 @@ namespace ACE.Server.WorldObjects
             var burden = EncumbranceSystem.GetBurden(capacity, EncumbranceVal ?? 0);
 
             // calculate stamina cost for this jump
-            var staminaCost = MovementSystem.JumpStaminaCost(jump.Extent, burden, false);
+            var extent = Math.Clamp(jump.Extent, 0.0f, 1.0f);
+            var staminaCost = MovementSystem.JumpStaminaCost(extent, burden, false);
 
             //Console.WriteLine($"Strength: {strength}, Capacity: {capacity}, Encumbrance: {EncumbranceVal ?? 0}, Burden: {burden}, StaminaCost: {staminaCost}");
 
-            // TODO: ensure player has enough stamina to jump
+            // ensure player has enough stamina to jump
+
+            /*if (staminaCost > Stamina.Current)
+            {
+                // get adjusted power
+                extent = MovementSystem.GetJumpPower(Stamina.Current, burden, false);
+
+                staminaCost = (int)Stamina.Current;
+
+                // adjust jump velocity
+                var velocityZ = MovementSystem.GetJumpHeight(burden, GetCreatureSkill(Skill.Jump).Current, extent, 1.0f);
+
+                jump.Velocity.Z = velocityZ;
+            }*/
+
+            IsJumping = true;
+
             UpdateVitalDelta(Stamina, -staminaCost);
+
+            IsJumping = false;
 
             //Console.WriteLine($"Jump velocity: {jump.Velocity}");
 
             // set jump velocity
+            // TODO: have server verify / scale magnitude
             PhysicsObj.set_velocity(jump.Velocity, true);
 
             // this shouldn't be needed, but without sending this update motion / simulated movement event beforehand,
@@ -860,7 +851,7 @@ namespace ACE.Server.WorldObjects
         public void OnExhausted()
         {
             // adjust player speed if running
-            if (CurrentMotionCommand == MotionCommand.RunForward)
+            if (CurrentMotionCommand == MotionCommand.RunForward && !IsJumping)
             {
                 // verify - forced commands from server should be non-autonomous, but could have been sent as autonomous in retail?
                 // if set to autonomous here, the desired effect doesn't happen
@@ -885,6 +876,10 @@ namespace ACE.Server.WorldObjects
         /// <param name="spellDID">Id of the spell cast by the consumable; can be null, if buffType != ConsumableBuffType.Spell</param>
         public void ApplyConsumable(string consumableName, Sound sound, ConsumableBuffType buffType, uint? boostAmount, uint? spellDID)
         {
+            if (IsBusy) return;
+
+            IsBusy = true;
+
             MotionCommand motionCommand;
 
             if (sound == Sound.Eat1)
@@ -952,8 +947,8 @@ namespace ACE.Server.WorldObjects
                     if (vitalName == "Health")
                     {
                         DamageHistory.OnHeal((uint)vitalChange);
-                        if (Fellowship != null)
-                            Fellowship.OnVitalUpdate(this);
+                        //if (Fellowship != null)
+                            //Fellowship.OnVitalUpdate(this);
                     }
 
                     buffMessage = new GameMessageSystemChat($"You regain {vitalChange} {vitalName}.", ChatMessageType.Craft);
@@ -967,6 +962,8 @@ namespace ACE.Server.WorldObjects
                 // return to original stance
                 var returnStance = new Motion(CurrentMotionState.Stance);
                 EnqueueBroadcastMotion(returnStance);
+
+                IsBusy = false;
             });
 
            actionChain.EnqueueChain();
@@ -1003,6 +1000,10 @@ namespace ACE.Server.WorldObjects
                 var adminObjs = PhysicsObj.ObjMaint.ObjectTable.Values.Where(o => o.WeenieObj.WorldObject.Visibility);
                 PhysicsObj.enqueue_objs(adminObjs);
 
+                var nodrawObjs = PhysicsObj.ObjMaint.ObjectTable.Values.Where(o => (o.WeenieObj.WorldObject.NoDraw ?? false) || (o.WeenieObj.WorldObject.UiHidden ?? false));
+                foreach (var wo in nodrawObjs)
+                    Session.Network.EnqueueSend(new GameMessageUpdateObject(wo.WeenieObj.WorldObject, Adminvision, Adminvision ? true : false));
+
                 // sending DO network messages for /adminvision off here doesn't work in client unfortunately?
             }
 
@@ -1025,9 +1026,11 @@ namespace ACE.Server.WorldObjects
             // ensure permanent npk
             if (PlayerKillerStatus != PlayerKillerStatus.NPK || MinimumTimeSincePk != null)
             {
-                Session.Network.EnqueueSend(new GameMessageSystemChat("Only Non-Player Killers may enter PK Lite. Please see @help pklite for more details about this command.", ChatMessageType.Broadcast));
+                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.OnlyNonPKsMayEnterPKLite));
                 return;
             }
+
+            EnqueueBroadcast(new GameMessageSystemChat($"{Name} is looking for a fight!", ChatMessageType.Broadcast));
 
             // perform pk lite entry motion / effect
             var motion = new Motion(MotionStance.NonCombat, MotionCommand.EnterPKLite);
@@ -1040,14 +1043,11 @@ namespace ACE.Server.WorldObjects
             actionChain.AddDelaySeconds(animLength);
             actionChain.AddAction(this, () =>
             {
-                PlayerKillerStatus = PlayerKillerStatus.PKLite;
+                UpdateProperty(this, PropertyInt.PlayerKillerStatus, (int)PlayerKillerStatus.PKLite);
 
-                var status = new GameMessagePublicUpdatePropertyInt(this, PropertyInt.PlayerKillerStatus, (int)PlayerKillerStatus);
-                var msg = new GameMessageSystemChat($"{Name} is looking for a fight!", ChatMessageType.Broadcast);
-
-                EnqueueBroadcast(status, msg);
-
+                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.YouAreNowPKLite));
             });
+
             actionChain.EnqueueChain();
         }
 

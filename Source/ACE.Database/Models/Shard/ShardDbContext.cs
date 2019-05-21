@@ -92,9 +92,8 @@ namespace ACE.Database.Models.Shard
             {
                 entity.ToTable("biota_properties_anim_part");
 
-                entity.HasIndex(e => new { e.ObjectId, e.Index, e.AnimationId })
-                    .HasName("object_Id_index_uidx")
-                    .IsUnique();
+                entity.HasIndex(e => e.ObjectId)
+                    .HasName("wcid_animpart_idx");
 
                 entity.Property(e => e.Id).HasColumnName("id");
 
@@ -704,7 +703,7 @@ namespace ACE.Database.Models.Shard
 
             modelBuilder.Entity<BiotaPropertiesEnchantmentRegistry>(entity =>
             {
-                entity.HasKey(e => new { e.ObjectId, e.EnchantmentCategory, e.SpellId, e.LayerId });
+                entity.HasKey(e => new { e.ObjectId, e.SpellId, e.CasterObjectId, e.LayerId });
 
                 entity.ToTable("biota_properties_enchantment_registry");
 
@@ -716,21 +715,17 @@ namespace ACE.Database.Models.Shard
                     .HasColumnName("object_Id")
                     .HasDefaultValueSql("'0'");
 
-                entity.Property(e => e.EnchantmentCategory)
-                    .HasColumnName("enchantment_Category")
-                    .HasDefaultValueSql("'0'");
-
                 entity.Property(e => e.SpellId)
                     .HasColumnName("spell_Id")
                     .HasColumnType("int(10)")
                     .HasDefaultValueSql("'0'");
 
-                entity.Property(e => e.LayerId)
-                    .HasColumnName("layer_Id")
-                    .HasDefaultValueSql("'0'");
-
                 entity.Property(e => e.CasterObjectId)
                     .HasColumnName("caster_Object_Id")
+                    .HasDefaultValueSql("'0'");
+
+                entity.Property(e => e.LayerId)
+                    .HasColumnName("layer_Id")
                     .HasDefaultValueSql("'0'");
 
                 entity.Property(e => e.DegradeLimit)
@@ -743,6 +738,10 @@ namespace ACE.Database.Models.Shard
 
                 entity.Property(e => e.Duration)
                     .HasColumnName("duration")
+                    .HasDefaultValueSql("'0'");
+
+                entity.Property(e => e.EnchantmentCategory)
+                    .HasColumnName("enchantment_Category")
                     .HasDefaultValueSql("'0'");
 
                 entity.Property(e => e.HasSpellSetId)
@@ -1003,9 +1002,8 @@ namespace ACE.Database.Models.Shard
             {
                 entity.ToTable("biota_properties_palette");
 
-                entity.HasIndex(e => new { e.ObjectId, e.SubPaletteId, e.Offset, e.Length })
-                    .HasName("object_Id_subPaletteId_offset_length_uidx")
-                    .IsUnique();
+                entity.HasIndex(e => e.ObjectId)
+                    .HasName("wcid_palette_idx");
 
                 entity.Property(e => e.Id).HasColumnName("id");
 
@@ -1171,9 +1169,8 @@ namespace ACE.Database.Models.Shard
             {
                 entity.ToTable("biota_properties_texture_map");
 
-                entity.HasIndex(e => new { e.ObjectId, e.Index, e.OldId, e.NewId })
-                    .HasName("object_Id_index_oldId_uidx")
-                    .IsUnique();
+                entity.HasIndex(e => e.ObjectId)
+                    .HasName("wcid_texturemap_idx");
 
                 entity.Property(e => e.Id).HasColumnName("id");
 
@@ -1392,13 +1389,12 @@ namespace ACE.Database.Models.Shard
 
             modelBuilder.Entity<CharacterPropertiesShortcutBar>(entity =>
             {
+                entity.HasKey(e => new { e.CharacterId, e.ShortcutBarIndex });
+
                 entity.ToTable("character_properties_shortcut_bar");
 
-                entity.HasIndex(e => new { e.CharacterId, e.ShortcutBarIndex, e.ShortcutObjectId })
-                    .HasName("wcid_shortcutbar_barIndex_ObjectId_uidx")
-                    .IsUnique();
-
-                entity.Property(e => e.Id).HasColumnName("id");
+                entity.HasIndex(e => e.CharacterId)
+                    .HasName("wcid_shortcutbar_idx");
 
                 entity.Property(e => e.CharacterId)
                     .HasColumnName("character_Id")

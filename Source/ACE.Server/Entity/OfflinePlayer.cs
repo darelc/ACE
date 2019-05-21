@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 
 using ACE.Database;
+using ACE.Database.Models.Auth;
 using ACE.Database.Models.Shard;
 using ACE.Entity;
 using ACE.Entity.Enum.Properties;
@@ -23,6 +24,8 @@ namespace ACE.Server.Entity
         /// </summary>
         public ObjectGuid Guid { get; }
 
+        public Account Account { get; }
+
         /// <summary>
         /// Restore a WorldObject from the database.
         /// Any properties tagged as Ephemeral will be removed from the biota.
@@ -33,6 +36,11 @@ namespace ACE.Server.Entity
             Guid = new ObjectGuid(Biota.Id);
 
             InitializePropertyDictionaries();
+
+            var character = DatabaseManager.Shard.GetCharacterByGuid(Guid.Full);
+
+            if (character != null)
+                Account = DatabaseManager.Authentication.GetAccountById(character.AccountId);
         }
 
         private void InitializePropertyDictionaries()
@@ -53,6 +61,8 @@ namespace ACE.Server.Entity
                 biotaPropertyStrings[(PropertyString)x.Type] = x;
         }
 
+        public bool IsDeleted => DatabaseManager.Shard.GetCharacterByGuid(Guid.Full).IsDeleted;
+        public bool IsPendingDeletion => DatabaseManager.Shard.GetCharacterByGuid(Guid.Full).DeleteTime > 0 && !IsDeleted;
 
         public DateTime LastRequestedDatabaseSave { get; protected set; }
 

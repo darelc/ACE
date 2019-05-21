@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Numerics;
@@ -9,6 +8,7 @@ using log4net;
 
 using ACE.Common;
 using ACE.Database;
+using ACE.Database.Models.World;
 using ACE.DatLoader;
 using ACE.DatLoader.FileTypes;
 using ACE.Entity;
@@ -20,6 +20,7 @@ using ACE.Server.Managers;
 using ACE.Server.Network;
 using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
+using ACE.Server.Physics.Entity;
 using ACE.Server.WorldObjects;
 using ACE.Server.WorldObjects.Entity;
 
@@ -175,7 +176,6 @@ namespace ACE.Server.Command.Handlers
             CommandHandlerHelper.WriteOutputInfo(session, NetworkStatistics.Summary(), ChatMessageType.Broadcast);
         }
 
-#if NETDIAG
         [CommandHandler("trash_c2s", AccessLevel.Developer, CommandHandlerFlag.None, "Trash (corrupt) the next C2S packet that arrives.")]
         public static void HandleTrashNextPacketC2S(Session session, params string[] parameters)
         {
@@ -213,7 +213,6 @@ namespace ACE.Server.Command.Handlers
             HandleJunkC2S(session, parameters);
             HandleJunkS2C(session, parameters);
         }
-#endif
 
         /// <summary>
         /// List all clothing bases which are compatible with setup
@@ -429,8 +428,35 @@ namespace ACE.Server.Command.Handlers
             string message = "";
             uint playerCounter = 0;
 
+            AccessLevel? targetAccessLevel = null;
+            if (parameters?.Length > 0)
+            {
+                if (Enum.TryParse(parameters[0], true, out AccessLevel parsedAccessLevel))
+                {
+                    targetAccessLevel = parsedAccessLevel;
+                }
+                else
+                {
+                    try
+                    {
+                        uint accessLevel = Convert.ToUInt16(parameters[0]);
+                        targetAccessLevel = (AccessLevel)accessLevel;
+                    }
+                    catch (Exception)
+                    {
+                        CommandHandlerHelper.WriteOutputInfo(session, "Invalid AccessLevel value", ChatMessageType.Broadcast);
+                        return;
+                    }
+                }
+            }
+
+            if (targetAccessLevel.HasValue)
+                message += $"Listing only {targetAccessLevel.Value.ToString()}s:\n";
+
             foreach (var player in PlayerManager.GetAllOnline())
             {
+                if (targetAccessLevel.HasValue && player.Account.AccessLevel != ((uint)targetAccessLevel.Value))
+                    continue;
                 message += $"{player.Name} : {player.Session.AccountId}\n";
                 playerCounter++;
             }
@@ -775,7 +801,7 @@ namespace ACE.Server.Command.Handlers
                 List<CommandParameterHelpers.ACECommandParameter> aceParams = new List<CommandParameterHelpers.ACECommandParameter>()
                 {
                     new CommandParameterHelpers.ACECommandParameter() {
-                        Type = CommandParameterHelpers.ACECommandParameterType.Player,
+                        Type = CommandParameterHelpers.ACECommandParameterType.OnlinePlayerNameOrIid,
                         Required = false,
                         DefaultValue = session.Player
                     },
@@ -790,8 +816,13 @@ namespace ACE.Server.Command.Handlers
                 {
                     try
                     {
-                        var xp = (long)aceParams[1].AsLong;
-                        aceParams[0].AsPlayer.GrantXP(xp);
+                        var amount = aceParams[1].AsLong;
+                        aceParams[0].AsPlayer.GrantXP(amount, XpType.Admin, false); 
+
+                        session.Network.EnqueueSend(new GameMessageSystemChat($"{amount:N0} experience granted.", ChatMessageType.Advancement));
+
+                        PlayerManager.BroadcastToAuditChannel(session.Player, $"{session.Player.Name} granted {amount:N0} of experience to {aceParams[0].AsPlayer.Name}.");
+
                         return;
                     }
                     catch
@@ -938,7 +969,7 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("comps", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Creates spell component items in your inventory for testing.")]
         public static void HandleComps(Session session, params string[] parameters)
         {
-            HashSet<uint> weenieIds = new HashSet<uint> { 686, 687, 688, 689, 690, 691, 740, 741, 742, 743, 744, 745, 746, 747, 748, 749, 750, 751, 752, 753, 754, 755, 756, 757, 758, 759, 760, 761, 762, 763, 764, 765, 766, 767, 768, 769, 770, 771, 772, 773, 774, 775, 776, 777, 778, 779, 780, 781, 782, 783, 784, 785, 786, 787, 788, 789, 790, 791, 792, 1643, 1644, 1645, 1646, 1647, 1648, 1649, 1650, 1651, 1652, 1653, 1654, 7299, 8897, 20631 };
+            HashSet<uint> weenieIds = new HashSet<uint> { 686, 687, 688, 689, 690, 691, 740, 741, 742, 743, 744, 745, 746, 747, 748, 749, 750, 751, 752, 753, 754, 755, 756, 757, 758, 759, 760, 761, 762, 763, 764, 765, 766, 767, 768, 769, 770, 771, 772, 773, 774, 775, 776, 777, 778, 779, 780, 781, 782, 783, 784, 785, 786, 787, 788, 789, 790, 791, 792, 1643, 1644, 1645, 1646, 1647, 1648, 1649, 1650, 1651, 1652, 1653, 1654, 7299, 7581, 8897, 20631 };
 
             AddWeeniesToInventory(session, weenieIds, 1);
         }
@@ -1409,7 +1440,7 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("knownplayers", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Shows the list of players known to this player", "/knownplayers")]
         public static void HandleKnownPlayers(Session session, params string[] parameters)
         {
-            Console.WriteLine($"\nKnown players to {session.Player.Name}: {session.Player.PhysicsObj.ObjMaint.ObjectTable.Values.Where(o => o.IsPlayer).Count()}");
+            Console.WriteLine($"\nKnown players to {session.Player.Name}: {session.Player.PhysicsObj.ObjMaint.ObjectTable.Values.Count(o => o.IsPlayer)}");
 
             foreach (var obj in session.Player.PhysicsObj.ObjMaint.ObjectTable.Values.Where(o => o.IsPlayer))
                 Console.WriteLine($"{obj.Name} ({obj.ID:X8})");
@@ -1421,7 +1452,7 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("visibleplayers", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Shows the list of players visible to this player", "/visibleplayers")]
         public static void HandleVisiblePlayers(Session session, params string[] parameters)
         {
-            Console.WriteLine($"\nVisible players to {session.Player.Name}: {session.Player.PhysicsObj.ObjMaint.VisibleObjectTable.Values.Where(o => o.IsPlayer).Count()}");
+            Console.WriteLine($"\nVisible players to {session.Player.Name}: {session.Player.PhysicsObj.ObjMaint.VisibleObjectTable.Values.Count(o => o.IsPlayer)}");
 
             foreach (var obj in session.Player.PhysicsObj.ObjMaint.VisibleObjectTable.Values.Where(o => o.IsPlayer))
                 Console.WriteLine($"{obj.Name} ({obj.ID:X8})");
@@ -1433,7 +1464,7 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("voyeurs", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Shows the list of voyeurs for this player", "/voyeurs")]
         public static void HandleVoyeurs(Session session, params string[] parameters)
         {
-            Console.WriteLine($"\nVoyeurs for {session.Player.Name}: {session.Player.PhysicsObj.ObjMaint.VoyeurTable.Values.Where(o => o.IsPlayer).Count()}");
+            Console.WriteLine($"\nVoyeurs for {session.Player.Name}: {session.Player.PhysicsObj.ObjMaint.VoyeurTable.Values.Count(o => o.IsPlayer)}");
 
             foreach (var obj in session.Player.PhysicsObj.ObjMaint.VoyeurTable.Values.Where(o => o.IsPlayer))
                 Console.WriteLine($"{obj.Name} ({obj.ID:X8})");
@@ -1681,6 +1712,7 @@ namespace ACE.Server.Command.Handlers
                 }
             }
             session.Network.EnqueueSend(new GameMessageSystemChat($"{obj.Name} ({obj.Guid}): {prop} = {value}", ChatMessageType.Broadcast));
+            PlayerManager.BroadcastToAuditChannel(session.Player, $"{session.Player.Name} changed a property for {obj.Name} ({obj.Guid}): {prop} = {value}");
         }
 
         /// <summary>
@@ -1719,32 +1751,274 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("debugdamage", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Toggles the display for player damage info", "/debugdamage <attack|defense|all|on|off>")]
         public static void HandleDebugDamage(Session session, params string[] parameters)
         {
+            // get last appraisal player target
+            var targetPlayer = CommandHandlerHelper.GetLastAppraisedObject(session) as Player;
+            if (targetPlayer == null) return;
+
             if (parameters.Length == 0)
             {
                 // toggle
-                if (session.Player.DebugDamage == Player.DebugDamageType.None)
-                    session.Player.DebugDamage = Player.DebugDamageType.All;
+                if (targetPlayer.DebugDamage == Player.DebugDamageType.None)
+                    targetPlayer.DebugDamage = Player.DebugDamageType.All;
                 else
-                    session.Player.DebugDamage = Player.DebugDamageType.None;
+                    targetPlayer.DebugDamage = Player.DebugDamageType.None;
             }
             else
             {
                 var param = parameters[0].ToLower();
                 if (param.Equals("on") || param.Equals("all"))
-                    session.Player.DebugDamage = Player.DebugDamageType.All;
+                    targetPlayer.DebugDamage = Player.DebugDamageType.All;
                 else if (param.Equals("off"))
-                    session.Player.DebugDamage = Player.DebugDamageType.None;
+                    targetPlayer.DebugDamage = Player.DebugDamageType.None;
                 else if (param.StartsWith("attack"))
-                    session.Player.DebugDamage |= Player.DebugDamageType.Attacker;
+                    targetPlayer.DebugDamage = Player.DebugDamageType.Attacker;
                 else if (param.StartsWith("defen"))
-                    session.Player.DebugDamage |= Player.DebugDamageType.Defender;
+                    targetPlayer.DebugDamage = Player.DebugDamageType.Defender;
                 else
                 {
-                    session.Network.EnqueueSend(new GameMessageSystemChat($"DebugDamage: unknown {param}", ChatMessageType.Broadcast));
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"DebugDamage: - unknown {param} ({targetPlayer.Name})", ChatMessageType.Broadcast));
                     return;
                 }
             }
-            session.Network.EnqueueSend(new GameMessageSystemChat($"DebugDamage: {session.Player.DebugDamage}", ChatMessageType.Broadcast));
+            session.Network.EnqueueSend(new GameMessageSystemChat($"DebugDamage: - {session.Player.DebugDamage} ({targetPlayer.Name})", ChatMessageType.Broadcast));
+            targetPlayer.DebugDamageTarget = session.Player.Guid;
+        }
+
+        /// <summary>
+        /// Enables the aetheria slots for the player
+        /// </summary>
+        [CommandHandler("enable-aetheria", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Enables the aetheria slots for the player")]
+        public static void HandleEnableAetheria(Session session, params string[] parameters)
+        {
+            var flags = (int)AetheriaBitfield.All;
+
+            if (parameters.Length > 0)
+                int.TryParse(parameters[0], out flags);
+
+            session.Player.UpdateProperty(session.Player, PropertyInt.AetheriaBitfield, flags);
+        }
+
+        [CommandHandler("debugchess", AccessLevel.Player, CommandHandlerFlag.RequiresWorld, 0, "Shows the chess move history for a player")]
+        public static void HandleDebugChess(Session session, params string[] parameters)
+        {
+            session.Player.ChessMatch?.DebugMove();
+        }
+
+        [CommandHandler("debugboard", AccessLevel.Player, CommandHandlerFlag.RequiresWorld, 0, "Shows the current chess board state")]
+        public static void HandleDebugBoard(Session session, params string[] parameters)
+        {
+            session.Player.ChessMatch?.Logic?.DebugBoard();
+        }
+
+        /// <summary>
+        /// Teleports directly to a dungeon by name or landblock
+        /// </summary>
+        [CommandHandler("teledungeon", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1, "<dungeon name or landblock>")]
+        public static void HandleTeleDungeon(Session session, params string[] parameters)
+        {
+            var isBlock = true;
+            var param = parameters[0];
+            if (parameters.Length > 1)
+                isBlock = false;
+
+            var landblock = 0u;
+            if (isBlock)
+            {
+                try
+                {
+                    landblock = Convert.ToUInt32(param, 16);
+
+                    if (landblock >= 0xFFFF)
+                        landblock = landblock >> 16;
+                }
+                catch (Exception)
+                {
+                    isBlock = false;
+                }
+            }
+
+            // teleport to dungeon landblock
+            if (isBlock)
+                HandleTeleDungeonBlock(session, landblock);
+
+            // teleport to dungeon by name
+            else
+                HandleTeleDungeonName(session, parameters);
+        }
+
+        public static void HandleTeleDungeonBlock(Session session, uint landblock)
+        {
+            using (var ctx = new WorldDbContext())
+            {
+                var query = from weenie in ctx.Weenie
+                            join wpos in ctx.WeeniePropertiesPosition on weenie.ClassId equals wpos.ObjectId
+                            where weenie.Type == (int)WeenieType.Portal && wpos.PositionType == (int)PositionType.Destination
+                            select new
+                            {
+                                Weenie = weenie,
+                                Dest = wpos
+                            };
+
+                var results = query.ToList();
+
+                var dest = results.Where(i => i.Dest.ObjCellId >> 16 == landblock).Select(i => i.Dest).FirstOrDefault();
+
+                if (dest == null)
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't find dungeon {landblock:X4}", ChatMessageType.Broadcast));
+                    return;
+                }
+
+                session.Player.Teleport(new Position(dest.ObjCellId, dest.OriginX, dest.OriginY, dest.OriginZ, dest.AnglesX, dest.AnglesY, dest.AnglesZ, dest.AnglesW));
+            }
+        }
+
+        public static void HandleTeleDungeonName(Session session, params string[] parameters)
+        {
+            var searchName = string.Join(" ", parameters);
+
+            using (var ctx = new WorldDbContext())
+            {
+                var query = from weenie in ctx.Weenie
+                            join wstr in ctx.WeeniePropertiesString on weenie.ClassId equals wstr.ObjectId
+                            join wpos in ctx.WeeniePropertiesPosition on weenie.ClassId equals wpos.ObjectId
+                            where weenie.Type == (int)WeenieType.Portal && wstr.Type == (int)PropertyString.Name && wpos.PositionType == (int)PositionType.Destination
+                            select new
+                            {
+                                Weenie = weenie,
+                                Name = wstr,
+                                Dest = wpos
+                            };
+
+                var results = query.ToList();
+
+                var dest = results.Where(i => i.Name.Value.Equals(searchName, StringComparison.OrdinalIgnoreCase)).Select(i => i.Dest).FirstOrDefault();
+
+                if (dest == null)
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"Couldn't find dungeon name {searchName}", ChatMessageType.Broadcast));
+                    return;
+                }
+
+                session.Player.Teleport(new Position(dest.ObjCellId, dest.OriginX, dest.OriginY, dest.OriginZ, dest.AnglesX, dest.AnglesY, dest.AnglesZ, dest.AnglesW));
+            }
+        }
+
+
+        [CommandHandler("clearphysicscaches", AccessLevel.Developer, CommandHandlerFlag.None, 0, "Clears Physics Object Caches")]
+        public static void HandleClearPhysicsCaches(Session session, params string[] parameters)
+        {
+            BSPCache.Clear();
+            GfxObjCache.Clear();
+            PolygonCache.Clear();
+            VertexCache.Clear();
+
+            CommandHandlerHelper.WriteOutputInfo(session, "Physics caches cleared");
+        }
+
+        [CommandHandler("forcegc", AccessLevel.Developer, CommandHandlerFlag.None, 0, "Forces .NET Garbage Collection")]
+        public static void HandleForceGC(Session session, params string[] parameters)
+        {
+            GC.Collect();
+
+            CommandHandlerHelper.WriteOutputInfo(session, ".NET Garbage Collection forced");
+        }
+
+        [CommandHandler("lootgen", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1, "Generate a piece of loot from the LootGenerationFactory. Syntax is \"lootgen (wcid) <tier>\"")]
+        public static void HandleLootGen(Session session, params string[] parameters)
+        {
+            string weenieClassDescription = parameters[0];
+            bool wcid = uint.TryParse(weenieClassDescription, out uint weenieClassId);
+
+            if (!wcid)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"WCID must be a valid weenie id", ChatMessageType.Broadcast));
+                return;
+            }
+
+            int tier = 1;
+            if (parameters.Length > 1)
+            {
+                var isValidStackSize = int.TryParse(parameters[1], out tier);
+                if (!isValidStackSize || tier < 1 || tier > 8)
+                {
+                    session.Network.EnqueueSend(new GameMessageSystemChat($"Loot Tier must be number between 1 and 8", ChatMessageType.Broadcast));
+                    return;
+                }
+            }
+
+            // Just using this check some properties before we throw it at the loot gen so we can give feedback to the user
+            WorldObject lootTest = WorldObjectFactory.CreateNewWorldObject(weenieClassId);
+
+            if (lootTest == null)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"{weenieClassId} is not a valid wcid.", ChatMessageType.Broadcast));
+                return;
+            }
+
+            if (lootTest.TsysMutationData == null)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Weenie has a missing PropertyInt.TsysMutationData needed for this function.", ChatMessageType.Broadcast));
+                return;
+            }
+
+            WorldObject loot = LootGenerationFactory.CreateLootByWCID(weenieClassId, tier);
+            session.Player.TryCreateInInventoryWithNetworking(loot);
+        }
+
+        [CommandHandler("ciloot", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1, "Generates randomized loot in player's inventory", "<tier> optional: <# items>")]
+        public static void HandleCILoot(Session session, params string[] parameters)
+        {
+            var tier = 1;
+            int.TryParse(parameters[0], out tier);
+            tier = Math.Clamp(tier, 1, 8);
+
+            var numItems = 1;
+            if (parameters.Length > 1)
+                int.TryParse(parameters[1], out numItems);
+
+            for (var i = 0; i < numItems; i++)
+            {
+                var wo = LootGenerationFactory.CreateRandomLootObjects(tier, true);
+                if (wo != null)
+                    session.Player.TryCreateInInventoryWithNetworking(wo);
+                else
+                    log.Error($"{session.Player.Name}.HandleCILoot: LootGenerationFactory.CreateRandomLootObjects({tier}) returned null");
+            }
+        }
+
+        [CommandHandler("makeiou", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1, "Make an IOU and put it in your inventory","<wcid>")]
+        public static void HandleMakeIOU(Session session, params string[] parameters)
+        {
+            string weenieClassDescription = parameters[0];
+            bool wcid = uint.TryParse(weenieClassDescription, out uint weenieClassId);
+
+            if (!wcid)
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"WCID must be a valid weenie id", ChatMessageType.Broadcast));
+                return;
+            }
+
+            var iou = PlayerFactory.CreateIOU(weenieClassId);
+
+            if (iou != null)
+                session.Player.TryCreateInInventoryWithNetworking(iou);
+        }
+
+        [CommandHandler("testdeathitems", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Test death item selection", "")]
+        public static void HandleTestDeathItems(Session session, params string[] parameters)
+        {
+            var inventory = session.Player.GetAllPossessions();
+            var sorted = new DeathItems(inventory);
+
+            var i = 0;
+            foreach (var item in sorted.Inventory)
+            {
+                if ((item.WorldObject.Bonded ?? 0) != 0)
+                    continue;
+
+                session.Network.EnqueueSend(new GameMessageSystemChat($"{++i}. {item.Name} ({item.Category}, AdjustedValue: {item.AdjustedValue})", ChatMessageType.Broadcast));
+            }
         }
     }
 }

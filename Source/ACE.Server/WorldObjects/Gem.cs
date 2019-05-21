@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 
+using ACE.Common;
 using ACE.Database.Models.Shard;
 using ACE.Database.Models.World;
 using ACE.DatLoader.Entity;
@@ -8,9 +9,11 @@ using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity;
+using ACE.Server.Managers;
 using ACE.Server.Network;
 using ACE.Server.Network.Structure;
 using ACE.Server.Network.GameEvent.Events;
+using ACE.Server.Network.GameMessages.Messages;
 
 namespace ACE.Server.WorldObjects
 {
@@ -36,31 +39,6 @@ namespace ACE.Server.WorldObjects
         {
         }
 
-        public override ActivationResult CheckUseRequirements(WorldObject activator)
-        {
-            if (!(activator is Player player))
-                return new ActivationResult(false);
-
-            var baseRequirements = base.CheckUseRequirements(activator);
-            if (!baseRequirements.Success)
-                return baseRequirements;
-
-            // are cooldown timers specific to gems, or should they be in base?
-            if (!player.EnchantmentManager.CheckCooldown(CooldownId))
-            {
-                // TODO: werror/string not found, find exact message
-
-                /*var cooldown = player.GetCooldown(this);
-                var timer = cooldown.GetFriendlyString();
-                player.Session.Network.EnqueueSend(new GameMessageSystemChat($"{Name} can be activated again in {timer}", ChatMessageType.Broadcast));*/
-
-                player.Session.Network.EnqueueSend(new GameEventCommunicationTransientString(player.Session, "You have used this item too recently"));
-                return new ActivationResult(false);
-            }
-
-            return new ActivationResult(true);
-        }
-
         /// <summary>
         /// This is raised by Player.HandleActionUseItem.<para />
         /// The item should be in the players possession.
@@ -75,22 +53,42 @@ namespace ACE.Server.WorldObjects
             if (!(activator is Player player))
                 return;
 
-            if (UseCreateContractId == null)
+            if (UseCreateContractId != null)
             {
-                player.EnchantmentManager.StartCooldown(this);
+                ActOnUseContract(player);
+                return;
+            }
 
-                if (SpellDID.HasValue)
+            // handle rare gems
+            if (RareUsesTimer)
+            {
+                var currentTime = Time.GetUnixTime();
+
+                var timeElapsed = currentTime - player.LastRareUsedTimestamp;
+
+                if (timeElapsed < RareTimer)
                 {
-                    var spell = new Server.Entity.Spell((uint)SpellDID);
-
-                    TryCastSpell(spell, player, this);
+                    // TODO: get retail message
+                    var remainTime = (int)Math.Ceiling(RareTimer - timeElapsed);
+                    player.Session.Network.EnqueueSend(new GameMessageSystemChat($"You may use another timed rare in {remainTime}s", ChatMessageType.Broadcast));
+                    return;
                 }
 
-                if ((GetProperty(PropertyBool.UnlimitedUse) ?? false) == false)
-                    player.TryConsumeFromInventoryWithNetworking(this, 1);
+                player.LastRareUsedTimestamp = currentTime;
+
+                // local broadcast usage
+                player.EnqueueBroadcast(new GameMessageSystemChat($"{player.Name} used the rare item {Name}", ChatMessageType.Broadcast));
             }
-            else
-                ActOnUseContract(player);
+
+            if (SpellDID.HasValue)
+            {
+                var spell = new Server.Entity.Spell((uint)SpellDID);
+
+                TryCastSpell(spell, player, this);
+            }
+
+            if ((GetProperty(PropertyBool.UnlimitedUse) ?? false) == false)
+                player.TryConsumeFromInventoryWithNetworking(this, 1);
         }
 
         public void ActOnUseContract(Player player)
@@ -154,5 +152,43 @@ namespace ACE.Server.WorldObjects
             else
                 ChatPacket.SendServerMessage(player.Session, "You already have this quest tracked: " + contractTracker.ContractDetails.ContractName, ChatMessageType.Broadcast);
         }
+
+        public int? RareId
+        {
+            get => GetProperty(PropertyInt.RareId);
+            set { if (!value.HasValue) RemoveProperty(PropertyInt.RareId); else SetProperty(PropertyInt.RareId, value.Value); }
+        }
+
+        public bool RareUsesTimer
+        {
+            get => GetProperty(PropertyBool.RareUsesTimer) ?? false;
+            set { if (!value) RemoveProperty(PropertyBool.RareUsesTimer); else SetProperty(PropertyBool.RareUsesTimer, value); }
+        }
+
+        public override void HandleActionUseOnTarget(Player player, WorldObject target)
+        {
+            // should tailoring kit / aetheria be subtyped?
+            if (Tailoring.IsTailoringKit(WeenieClassId))
+            {
+                Tailoring.UseObjectOnTarget(player, this, target);
+                return;
+            }
+
+            if (WeenieClassId == Aetheria.AetheriaManaStone)
+            {
+                Aetheria.UseObjectOnTarget(player, this, target);
+                return;
+            }
+
+            // fallback on recipe manager?
+            base.HandleActionUseOnTarget(player, target);
+        }
+
+        /// <summary>
+        /// For Rares that use cooldown timers (RareUsesTimer),
+        /// any other rares with RareUsesTimer may not be used for 3 minutes
+        /// Note that if the player logs out, this cooldown timer continues to tick/expire (unlike enchantments)
+        /// </summary>
+        public static int RareTimer = 180;
     }
 }

@@ -15,6 +15,7 @@ namespace ACE.Server.Network
         /// </summary>
         public BinaryWriter BodyWriter { get; private set; }
 
+        private uint finalChecksum;
         private uint issacXor;
         private bool issacXorSet;
         public uint IssacXor
@@ -55,11 +56,11 @@ namespace ACE.Server.Network
 
             if (Data != null && Data.Length > 0)
             {
-                var body = Data.ToArray();
-                Buffer.BlockCopy(body, 0, buffer, offset, body.Length);
-                offset += body.Length;
+                var body = Data.GetBuffer();
+                Buffer.BlockCopy(body, 0, buffer, offset, (int)Data.Length);
+                offset += (int)Data.Length;
 
-                payloadChecksum += Hash32.Calculate(body, body.Length);
+                payloadChecksum += Hash32.Calculate(body, (int)Data.Length);
             }
 
             foreach (ServerPacketFragment fragment in Fragments)
@@ -70,9 +71,15 @@ namespace ACE.Server.Network
             Header.Size = (ushort)(size - PacketHeader.HeaderSize);
 
             var headerChecksum = Header.CalculateHash32();
+            finalChecksum = headerChecksum + payloadChecksum;
             Header.Checksum = headerChecksum + (payloadChecksum ^ issacXor);
-
             Header.AddPayloadToBuffer(buffer);
+        }
+
+        public override string ToString()
+        {
+            var c = Header.HasFlag(PacketHeaderFlags.EncryptedChecksum) ? $" CRC: {finalChecksum} XOR: {issacXor}" : "";
+            return $">>> {Header}{c}".TrimEnd();
         }
     }
 }

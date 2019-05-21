@@ -1,6 +1,8 @@
 using System;
 using System.Linq;
 
+using log4net;
+
 using ACE.Database.Models.Shard;
 using ACE.Database.Models.World;
 using ACE.Entity;
@@ -9,11 +11,15 @@ using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity;
 using ACE.Server.Managers;
 using ACE.Server.Network.GameMessages.Messages;
+using ACE.Server.Factories;
+using ACE.Server.Entity.Actions;
 
 namespace ACE.Server.WorldObjects
 {
     public partial class Corpse : Container
     {
+        private static readonly ILog log = LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
         /// <summary>
         /// The maximum number of seconds for an empty corpse to stick around
         /// </summary>
@@ -48,6 +54,8 @@ namespace ACE.Server.WorldObjects
 
             ContainerCapacity = 10;
             ItemCapacity = 120;
+
+            SuppressGenerateEffect = true;
         }
 
         /// <summary>
@@ -109,15 +117,19 @@ namespace ACE.Server.WorldObjects
         public bool HasPermission(Player player)
         {
             // players can loot their own corpses
-            if (player.Guid.Full == VictimId)
+            if (VictimId == null || player.Guid.Full == VictimId)
                 return true;
 
             // players can loot monsters they killed
-            if (KillerId != null && player.Guid.Full == KillerId)
+            if (KillerId != null && player.Guid.Full == KillerId || IsLooted)
                 return true;
 
             // players can /permit other players to loot their corpse
             if (player.HasLootPermission(new ObjectGuid(VictimId.Value)))
+                return true;
+
+            // all players can loot monster corpses after 1/2 decay time
+            if (TimeToRot != null && TimeToRot < HalfLife && !new ObjectGuid(VictimId.Value).IsPlayer())
                 return true;
 
             // players in the same fellowship as the killer w/ loot sharing enabled
@@ -128,6 +140,83 @@ namespace ACE.Server.WorldObjects
                     return true;
             }
             return false;
+        }
+
+        public bool IsLooted;
+
+        /// <summary>
+        /// The number of seconds before all players can loot a monster corpse
+        /// </summary>
+        public static int HalfLife = 180;
+
+
+        public override void Close(Player player)
+        {
+            base.Close(player);
+
+            if (VictimId != null && !new ObjectGuid(VictimId.Value).IsPlayer())
+                IsLooted = true;
+        }
+
+        public bool CorpseGeneratedRare
+        {
+            get => GetProperty(PropertyBool.CorpseGeneratedRare) ?? false;
+            set { if (!value) RemoveProperty(PropertyBool.CorpseGeneratedRare); else SetProperty(PropertyBool.CorpseGeneratedRare, value); }
+        }
+
+        public override void EnterWorld()
+        {
+            var actionChain = new ActionChain();
+
+            base.EnterWorld();
+
+            actionChain.AddDelaySeconds(.5);
+            actionChain.AddAction(this, () =>
+            {
+                if (Location != null)
+                {
+                    if (CorpseGeneratedRare)
+                    {
+                        EnqueueBroadcast(new GameMessageSystemChat($"{killerName} has discovered the {rareGenerated.Name}!", ChatMessageType.System));
+                        ApplySoundEffects(Sound.TriggerActivated, 10);
+                    }
+                }
+            });
+            actionChain.EnqueueChain();
+        }
+
+        private WorldObject rareGenerated;
+        private string killerName;
+
+        /// <summary>
+        /// Called to generate rare and add to corpse inventory
+        /// </summary>
+        public void GenerateRare(WorldObject killer)
+        {
+            //todo: calculate chances for killer's luck (rare timers)
+
+            var wo = LootGenerationFactory.CreateRare();
+            if (wo == null)
+                return;
+
+            if (!wo.IconUnderlayId.HasValue || wo.IconUnderlayId.Value != 0x6005B0C) // ensure icon underlay exists for rare (loot profiles use this)
+                wo.IconUnderlayId = 0x6005B0C;
+
+            var tier = LootGenerationFactory.GetRareTier(wo.WeenieClassId);
+            LootGenerationFactory.RareChances.TryGetValue(tier, out var chance);
+
+            log.Info($"[RARE] {Name} ({Guid}) generated rare {wo.Name} ({wo.Guid}) for {killer.Name} ({killer.Guid})");
+            log.Info($"[RARE] Tier {tier} -- 1 / {chance:N0} chance");
+
+            if (TryAddToInventory(wo))
+            {
+                rareGenerated = wo;
+                killerName = killer.Name.TrimStart('+');
+                CorpseGeneratedRare = true;
+                LongDesc += " This corpse generated a rare item!";
+            }
+            else
+                log.Error($"[RARE] failed to add to corpse inventory");
         }
     }
 }

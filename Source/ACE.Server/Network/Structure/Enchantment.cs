@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 
@@ -74,6 +75,7 @@ namespace ACE.Server.Network.Structure
             Duration = entry.Duration;      // item spells can have -1, overriding the spell duration
             CasterGuid = entry.CasterObjectId;
             StatModValue = entry.StatModValue;
+            SpellSetID = entry.SpellSetId;
 
             Target = target;
             EnchantmentMask = (EnchantmentMask)entry.EnchantmentCategory;
@@ -110,6 +112,26 @@ namespace ACE.Server.Network.Structure
             StatModType = (EnchantmentTypeFlags)entry.StatModType;
             StatModKey = entry.StatModKey;
             StatModValue = entry.StatModValue;
+        }
+
+        public string GetInfo()
+        {
+            var spell = new Spell(SpellID);
+
+            var info = $"Spell: {spell.Name} ({SpellID})\n";
+            info += $"Target: {Target.Name}\n";
+            info += $"Layer: {Layer}\n";
+            info += $"SpellCategory: {(SpellCategory)SpellCategory}\n";
+            info += $"Power: {PowerLevel}\n";
+            info += $"StartTime: {StartTime}\n";
+            info += $"Duration: {Duration}\n";
+            info += $"CasterGuid: {CasterGuid:X8}\n";
+            info += $"StatModType: {StatModType}\n";
+            info += $"StatModKey: {StatModKey}\n";
+            info += $"StatModValue: {StatModValue}\n";
+            info += "---------";
+
+            return info;
         }
     }
 

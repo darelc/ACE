@@ -33,6 +33,10 @@ namespace ACE.Server.WorldObjects
         {
             if (SpellDID != null)
                 Spell = new Server.Entity.Spell(SpellDID.Value, false);
+
+            if (Spell != null)
+                LongDesc = $"Inscribed spell: {Spell.Name}\n{Spell.Description}";
+            Use = "Use this item to attempt to learn its spell.";
         }
 
         /// <summary>
@@ -51,6 +55,10 @@ namespace ACE.Server.WorldObjects
                 Console.WriteLine($"{Name}.ActOnUse({activator.Name}) - SpellDID not found for {WeenieClassId}");
                 return;
             }
+
+            if (player.IsBusy) return;
+
+            player.IsBusy = true;
 
             var actionChain = new ActionChain();
 
@@ -101,6 +109,8 @@ namespace ACE.Server.WorldObjects
             player.LastUseTime += animTime;     // return stance
 
             player.EnqueueMotion(actionChain, MotionCommand.Ready);
+
+            actionChain.AddAction(player, () => player.IsBusy = false);
 
             actionChain.EnqueueChain();
         }

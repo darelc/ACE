@@ -5,13 +5,15 @@ using ACE.Database.Models.World;
 using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
+using ACE.Server.Managers;
+using ACE.Server.Entity;
 
 namespace ACE.Server.WorldObjects
 {
     /// <summary>
     /// Summonable monsters combat AI
     /// </summary>
-    public class CombatPet: Creature
+    public class CombatPet : Creature
     {
         public DateTime ExpirationTime;
 
@@ -37,15 +39,28 @@ namespace ACE.Server.WorldObjects
 
         private void SetEphemeralValues()
         {
+            Ethereal = true;
+            RadarBehavior = ACE.Entity.Enum.RadarBehavior.ShowNever;
+            Usable = ACE.Entity.Enum.Usable.No;
 
+            if (!PropertyManager.GetBool("advanced_combat_pets").Item)
+                Biota.BiotaPropertiesSpellBook.Clear();
+
+            Biota.BiotaPropertiesCreateList.Clear();
+            Biota.BiotaPropertiesEmote.Clear();
+            GeneratorProfiles.Clear();            
+
+            DeathTreasureType = null;
         }
 
         public void Init(Player player, DamageType damageType, PetDevice petDevice)
         {
             SuppressGenerateEffect = true;
             NoCorpse = true;
+            TreasureCorpse = false;
             ExpirationTime = DateTime.UtcNow + TimeSpan.FromSeconds(45);
-            Location = player.Location.InFrontOf(5f);   // FIXME: get correct cell
+            Location = player.Location.InFrontOf(5f);
+            Location.LandblockId = new LandblockId(Location.GetCell());
             Name = player.Name + "'s " + Name;
             P_PetOwner = player;
             PetOwner = player.Guid.Full;
@@ -55,6 +70,7 @@ namespace ACE.Server.WorldObjects
             Attackable = true;
             MonsterState = State.Awake;
             IsAwake = true;
+            player.CurrentActiveCombatPet = this;
 
             // copy ratings from pet device
             DamageRating = petDevice.GearDamage;
@@ -63,20 +79,6 @@ namespace ACE.Server.WorldObjects
             CritDamageResistRating = petDevice.GearCritDamageResist;
             CritRating = petDevice.GearCrit;
             CritResistRating = petDevice.GearCritResist;
-
-            /*var spellBase = DatManager.PortalDat.SpellTable.Spells[32981];
-            var spell = DatabaseManager.World.GetCachedSpell(32981);
-
-            if (spell != null && spellBase != null)
-            {
-                var enchantment = new Enchantment(this, player.Guid, spellBase, spellBase.Duration, 1, (uint)EnchantmentMask.Cooldown, spell.StatModType);
-                player.Session.Network.EnqueueSend(new GameEventMagicUpdateEnchantment(player.Session, enchantment));
-            }
-            else
-            {
-                Console.WriteLine("Cooldown spell or spellBase were null");
-            }
-            */
         }
 
         public override void HandleFindTarget()

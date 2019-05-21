@@ -31,7 +31,10 @@ namespace ACE.Server.Network.Handlers
             if (clientString != session.Account)
                 return;
 
-            CharacterCreateEx(message, session);
+            if (WorldManager.WorldStatus == WorldManager.WorldStatusState.Open || session.AccessLevel > AccessLevel.Player)
+                CharacterCreateEx(message, session);
+            else
+                session.SendCharacterError(CharacterError.LogonServerFull);
         }
 
         private static void CharacterCreateEx(ClientMessage message, Session session)
@@ -165,7 +168,10 @@ namespace ACE.Server.Network.Handlers
         [GameMessage(GameMessageOpcode.CharacterEnterWorldRequest, SessionState.AuthConnected)]
         public static void CharacterEnterWorldRequest(ClientMessage message, Session session)
         {
-            session.Network.EnqueueSend(new GameMessageCharacterEnterWorldServerReady());
+            if (WorldManager.WorldStatus == WorldManager.WorldStatusState.Open || session.AccessLevel > AccessLevel.Player)
+                session.Network.EnqueueSend(new GameMessageCharacterEnterWorldServerReady());
+            else
+                session.SendCharacterError(CharacterError.LogonServerFull);
         }
 
         [GameMessage(GameMessageOpcode.CharacterEnterWorld, SessionState.AuthConnected)]
@@ -223,6 +229,12 @@ namespace ACE.Server.Network.Handlers
             string clientString = message.Payload.ReadString16L();
             uint characterSlot = message.Payload.ReadUInt32();
 
+            if (WorldManager.WorldStatus == WorldManager.WorldStatusState.Closed && session.AccessLevel < AccessLevel.Advocate)
+            {
+                session.SendCharacterError(CharacterError.LogonServerFull);
+                return;
+            }
+
             if (clientString != session.Account)
             {
                 session.SendCharacterError(CharacterError.Delete);
@@ -259,6 +271,12 @@ namespace ACE.Server.Network.Handlers
         {
             var guid = message.Payload.ReadUInt32();
 
+            if (WorldManager.WorldStatus == WorldManager.WorldStatusState.Closed && session.AccessLevel < AccessLevel.Advocate)
+            {
+                session.SendCharacterError(CharacterError.LogonServerFull);
+                return;
+            }
+
             var character = session.Characters.SingleOrDefault(c => c.Id == guid);
             if (character == null)
                 return;
@@ -276,8 +294,15 @@ namespace ACE.Server.Network.Handlers
 
                     DatabaseManager.Shard.SaveCharacter(character, new ReaderWriterLockSlim(), result =>
                     {
+                        var name = character.Name;
+
+                        if (ConfigManager.Config.Server.Accounts.OverrideCharacterPermissions && session.AccessLevel > AccessLevel.Advocate)
+                            name = "+" + name;
+                        else if (!ConfigManager.Config.Server.Accounts.OverrideCharacterPermissions && character.IsPlussed)
+                            name = "+" + name;
+
                         if (result)
-                            session.Network.EnqueueSend(new GameMessageCharacterRestore(guid, character.Name, 0u));
+                            session.Network.EnqueueSend(new GameMessageCharacterRestore(guid, name, 0u));
                         else
                             SendCharacterCreateResponse(session, CharacterGenerationVerificationResponse.Corrupt);
                     });

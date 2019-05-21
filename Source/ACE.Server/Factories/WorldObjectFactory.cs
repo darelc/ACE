@@ -128,6 +128,10 @@ namespace ACE.Server.Factories
                     return new Allegiance(weenie, guid);
                 case WeenieType.AugmentationDevice:
                     return new AugmentationDevice(weenie, guid);
+                case WeenieType.AttributeTransferDevice:
+                    return new AttributeTransferDevice(weenie, guid);
+                case WeenieType.CraftTool:
+                    return new CraftTool(weenie, guid);
                 default:
                     return new GenericObject(weenie, guid);
             }
@@ -239,6 +243,10 @@ namespace ACE.Server.Factories
                     return new Allegiance(biota);
                 case WeenieType.AugmentationDevice:
                     return new AugmentationDevice(biota);
+                case WeenieType.AttributeTransferDevice:
+                    return new AttributeTransferDevice(biota);
+                case WeenieType.CraftTool:
+                    return new CraftTool(biota);
                 default:
                     return new GenericObject(biota);
             }
@@ -349,6 +357,32 @@ namespace ACE.Server.Factories
                 return null;
 
             return CreateNewWorldObject(weenie.ClassId);
+        }
+
+        /// <summary>
+        /// Creates a new WorldObject from a CreateList item
+        /// </summary>
+        public static WorldObject CreateNewWorldObject(BiotaPropertiesCreateList item)
+        {
+            var isTreasure = (item.DestinationType & (int)DestinationType.Treasure) != 0;
+
+            var wo = CreateNewWorldObject(item.WeenieClassId);
+
+            if (wo == null) return null;
+
+            wo.DestinationType = (DestinationType)item.DestinationType;
+
+            if (item.StackSize > 1)
+                wo.SetStackSize(item.StackSize);
+
+            if (item.Palette > 0)
+                wo.PaletteTemplate = item.Palette;
+
+            // if treasure, this is probability instead of shade
+            if (!isTreasure && item.Shade > 0)
+                wo.Shade = item.Shade;
+
+            return wo;
         }
     }
 }

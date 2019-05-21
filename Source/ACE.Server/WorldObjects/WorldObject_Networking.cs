@@ -24,20 +24,20 @@ namespace ACE.Server.WorldObjects
 {
     partial class WorldObject 
     {
-        public virtual void SerializeUpdateObject(BinaryWriter writer)
+        public virtual void SerializeUpdateObject(BinaryWriter writer, bool adminvision = false, bool changenodraw = false)
         {
             // content of these 2 is the same? TODO: Validate that?
-            SerializeCreateObject(writer);
+            SerializeCreateObject(writer, false, adminvision, changenodraw);
         }
 
-        public virtual void SerializeCreateObject(BinaryWriter writer)
+        public virtual void SerializeCreateObject(BinaryWriter writer, bool adminvision = false, bool changenodraw = false)
         {
-            SerializeCreateObject(writer, false);
+            SerializeCreateObject(writer, false, adminvision, changenodraw);
         }
 
-        public virtual void SerializeGameDataOnly(BinaryWriter writer)
+        public virtual void SerializeGameDataOnly(BinaryWriter writer, bool adminvision = false)
         {
-            SerializeCreateObject(writer, true);
+            SerializeCreateObject(writer, true, adminvision, false);
         }
 
         /// <summary>
@@ -52,19 +52,24 @@ namespace ACE.Server.WorldObjects
             writer.Write(Sequences.GetNextSequence(SequenceType.ObjectVisualDesc));
         }
 
-        private void SerializeCreateObject(BinaryWriter writer, bool gamedataonly)
+        private void SerializeCreateObject(BinaryWriter writer, bool gamedataonly, bool adminvision = false, bool changenodraw = false)
         {
             writer.WriteGuid(Guid);
 
             if (!gamedataonly)
             {
                 SerializeModelData(writer);
-                SerializePhysicsData(writer);
+                SerializePhysicsData(writer, adminvision, changenodraw);
             }
 
             var weenieFlags = CalculatedWeenieHeaderFlag();
             var weenieFlags2 = CalculatedWeenieHeaderFlag2();
             var descriptionFlags = CalculatedDescriptionFlag();
+
+            if (adminvision)
+            {
+                descriptionFlags &= ~ObjectDescriptionFlag.UiHidden;
+            }
 
             writer.Write((uint)weenieFlags);
             writer.WriteString16L(Name ?? String.Empty);
@@ -78,7 +83,7 @@ namespace ACE.Server.WorldObjects
                 writer.Write((uint)weenieFlags2);
 
             if ((weenieFlags & WeenieHeaderFlag.PluralName) != 0)
-                writer.WriteString16L(NamePlural);
+                writer.WriteString16L(PluralName);
 
             if ((weenieFlags & WeenieHeaderFlag.ItemsCapacity) != 0)
                 writer.Write(ItemCapacity ?? 0);
@@ -272,13 +277,24 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Sent as part of the CreateObject message, PhysicsDesc in protocol docs
         /// </summary>
-        private void SerializePhysicsData(BinaryWriter writer)
+        private void SerializePhysicsData(BinaryWriter writer, bool adminvision = false, bool changenodraw = false)
         {
             var physicsDescriptionFlag = CalculatedPhysicsDescriptionFlag();
+
+            if (adminvision && this is Player && CloakStatus == ACE.Entity.Enum.CloakStatus.On)
+            {
+                physicsDescriptionFlag |= PhysicsDescriptionFlag.Translucency;
+            }
 
             writer.Write((uint)physicsDescriptionFlag);
 
             var physicsState = GetPhysicsStateOrDefault();
+
+            if (changenodraw)
+            {
+                physicsState &= ~PhysicsState.NoDraw;
+                physicsState &= ~PhysicsState.Cloaked;
+            }
 
             writer.Write((uint)physicsState);
 
@@ -329,16 +345,19 @@ namespace ACE.Server.WorldObjects
             }
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.ObjScale) != 0)
-                writer.Write(ObjScale ?? 0u);
+                writer.Write(ObjScale ?? 0f);
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.Friction) != 0)
-                writer.Write(Friction ?? 0u);
+                writer.Write(Friction ?? 0f);
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.Elasticity) != 0)
-                writer.Write(Elasticity ?? 0u);
+                writer.Write(Elasticity ?? 0f);
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.Translucency) != 0)
-                writer.Write(Translucency ?? 0u);
+                if (adminvision && this is Player && CloakStatus == ACE.Entity.Enum.CloakStatus.On)
+                    writer.Write(0.5f);
+                else
+                    writer.Write(Translucency ?? 0f);
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.Velocity) != 0)
             {
@@ -359,7 +378,7 @@ namespace ACE.Server.WorldObjects
                 writer.Write(DefaultScriptId ?? 0);
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.DefaultScriptIntensity) != 0)
-                writer.Write(DefaultScriptIntensity ?? 0);
+                writer.Write(DefaultScriptIntensity ?? 0f);
 
             // timestamps
             writer.Write(Sequences.GetCurrentSequence(SequenceType.ObjectPosition));        // 0
@@ -662,7 +681,7 @@ namespace ACE.Server.WorldObjects
         {
             var weenieHeaderFlag = WeenieHeaderFlag.None;
 
-            if (NamePlural != null)
+            if (PluralName != null)
                 weenieHeaderFlag |= WeenieHeaderFlag.PluralName;
 
             if (ItemCapacity != null)
@@ -732,7 +751,7 @@ namespace ACE.Server.WorldObjects
             if ((Workmanship != null) && (uint?)Workmanship != 0u)
                 weenieHeaderFlag |= WeenieHeaderFlag.Workmanship;
 
-            if (EncumbranceVal != 0)
+            if (EncumbranceVal != 0 && !(this is Creature))
                 weenieHeaderFlag |= WeenieHeaderFlag.Burden;
 
             if ((SpellDID != null) && (SpellDID != 0))
@@ -834,7 +853,7 @@ namespace ACE.Server.WorldObjects
             ////Openable               = 0x00000001,
             if (WeenieType == WeenieType.Container || WeenieType == WeenieType.Corpse || WeenieType == WeenieType.Chest || WeenieType == WeenieType.Hook || WeenieType == WeenieType.Storage)
             {
-                if ((!IsLocked && !IsOpen) || (WeenieType == WeenieType.Hook || WeenieType == WeenieType.Storage))
+                if (CurrentLandblock == null || !IsLocked && !IsOpen || WeenieType == WeenieType.Hook || WeenieType == WeenieType.Storage)
                     flag |= ObjectDescriptionFlag.Openable;
                 else
                     flag &= ~ObjectDescriptionFlag.Openable;
@@ -1068,9 +1087,32 @@ namespace ACE.Server.WorldObjects
         protected void AddBaseModelData(ACE.Entity.ObjDesc objDesc)
         {
             // Hair/head
-            if (HeadObjectDID.HasValue)
+
+            // if (HeadObjectDID.HasValue && !HairStyle.HasValue)
+            // This Heritage check has been added for backwards compatibility. It works around the butthead Gear Knights appearance.
+            if (HeadObjectDID.HasValue && !HairStyle.HasValue && Heritage.HasValue && Heritage != (int)HeritageGroup.Gearknight)
                 objDesc.AnimPartChanges.Add(new ACE.Entity.AnimationPartChange { PartIndex = 0x10, PartID = HeadObjectDID.Value });
-            //AddModel(0x10, HeadObjectDID.Value);
+            else if (HairStyle.HasValue && Heritage.HasValue && Gender.HasValue)
+            {
+                // This indicates we have a Gear Knight or Olthoi(that is, player types treat "hairstyle" as a "Body Style")
+
+                // Load the CharGen data. It has all the anim & texture changes for the Body Style defined within it
+                var cg = DatManager.PortalDat.CharGen;
+                SexCG sex = cg.HeritageGroups[(uint)Heritage].Genders[(int)Gender];
+                if (sex.HairStyleList.Count > (int)HairStyle) // just check for a valid entry...
+                {
+                    HairStyleCG hairstyle = sex.HairStyleList[(int)HairStyle];
+
+                    // Add all the texture changes
+                    foreach (var tm in hairstyle.ObjDesc.TextureChanges)
+                        objDesc.TextureChanges.Add(new ACE.Entity.TextureMapChange { PartIndex = tm.PartIndex, OldTexture = tm.OldTexture, NewTexture = tm.NewTexture });
+
+                    // Add all the animation part changes
+                    foreach (var part in hairstyle.ObjDesc.AnimPartChanges)
+                        objDesc.AnimPartChanges.Add(new ACE.Entity.AnimationPartChange { PartIndex = part.PartIndex, PartID = part.PartID });
+                }
+            }
+
             if (this is Player player)
                 objDesc.TextureChanges.Add(new ACE.Entity.TextureMapChange { PartIndex = 0x10, OldTexture = player.Character.DefaultHairTexture, NewTexture = player.Character.HairTexture });
             //AddTexture(0x10, DefaultHairTextureDID.Value, HairTextureDID.Value);

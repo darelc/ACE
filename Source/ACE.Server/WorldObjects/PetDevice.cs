@@ -8,6 +8,7 @@ using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity;
+using ACE.Server.Entity.Actions;
 using ACE.Server.Managers;
 using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
@@ -92,14 +93,19 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            if (Structure == 0)
+            {
+                player.Session.Network.EnqueueSend(new GameEventCommunicationTransientString(player.Session, "You must refill the essence to use it again."));
+                return;
+            }
+
             var wcid = petData.Item1;
             var damageType = petData.Item2;
 
             if (SummonCreature(player, wcid, damageType))
             {
                 // decrease remaining uses
-                if (--Structure <= 0)
-                    player.TryConsumeFromInventoryWithNetworking(this, 1);
+                Structure--;
 
                 player.Session.Network.EnqueueSend(new GameMessagePublicUpdatePropertyInt(this, PropertyInt.Structure, Structure.Value));
             }
@@ -120,13 +126,6 @@ namespace ACE.Server.WorldObjects
 
             // cooldowns for gems and pet devices, anything else?
 
-            // should this verification be in base CheckUseRequirements?
-            if (!player.EnchantmentManager.CheckCooldown(CooldownId))
-            {
-                player.Session.Network.EnqueueSend(new GameEventCommunicationTransientString(player.Session, "You have used this item too recently"));
-                return new ActivationResult(false);
-            }
-
             // TODO: limit non-golems to summoning mastery
 
             return new ActivationResult(true);
@@ -143,7 +142,9 @@ namespace ACE.Server.WorldObjects
                 Console.WriteLine($"Couldn't find pet wcid #{wcid}");
                 return false;
             }
-            player.EnchantmentManager.StartCooldown(this);
+
+            if (weenie.Type != (int)WeenieType.CombatPet) // Combat Pets are currently being made from real creatures
+                weenie.Type = (int)WeenieType.CombatPet;
 
             var combatPet = new CombatPet(weenie, GuidManager.NewDynamicGuid());
             if (combatPet == null)
@@ -164,13 +165,13 @@ namespace ACE.Server.WorldObjects
 
             // ============ Golems ============
 
-            { 48886, new Tuple<uint, DamageType>(200, DamageType.Bludgeon) }, // mud golem (15)
-            { 48890, new Tuple<uint, DamageType>(202, DamageType.Bludgeon) }, // sandstone golem (30)
-            { 48878, new Tuple<uint, DamageType>(194, DamageType.Bludgeon) }, // copper golem (50)
-            { 48888, new Tuple<uint, DamageType>(14559, DamageType.Bludgeon) }, // oak golem (80)
-            { 48882, new Tuple<uint, DamageType>(7096, DamageType.Bludgeon) }, // gold golem (100)
-            { 48880, new Tuple<uint, DamageType>(7507, DamageType.Bludgeon) }, // coral golem (125)
-            { 48884, new Tuple<uint, DamageType>(197, DamageType.Bludgeon) }, // iron golem (150)
+            { 48886, new Tuple<uint, DamageType>(48887, DamageType.Bludgeon) }, // mud golem (15)
+            { 48890, new Tuple<uint, DamageType>(48891, DamageType.Bludgeon) }, // sandstone golem (30)
+            { 48878, new Tuple<uint, DamageType>(48879, DamageType.Bludgeon) }, // copper golem (50)
+            { 48888, new Tuple<uint, DamageType>(48889, DamageType.Bludgeon) }, // oak golem (80)
+            { 48882, new Tuple<uint, DamageType>(48883, DamageType.Bludgeon) }, // gold golem (100)
+            { 48880, new Tuple<uint, DamageType>(48881, DamageType.Bludgeon) }, // coral golem (125)
+            { 48884, new Tuple<uint, DamageType>(48885, DamageType.Bludgeon) }, // iron golem (150)
 
             // ============================ Naturalist ============================
 
@@ -389,7 +390,7 @@ namespace ACE.Server.WorldObjects
             { 49261, new Tuple<uint, DamageType>(26692, DamageType.Acid) }, // acid elemental (50)
             { 49262, new Tuple<uint, DamageType>(7993, DamageType.Acid) }, // acid elemental (80)
             { 49263, new Tuple<uint, DamageType>(7994, DamageType.Acid) }, // acid elemental (100)
-            { 49264, new Tuple<uint, DamageType>(12038, DamageType.Acid) }, // acid child (125)
+            { 49264, new Tuple<uint, DamageType>(11538, DamageType.Acid) }, // acid child (125)
             { 49265, new Tuple<uint, DamageType>(27715, DamageType.Acid) }, // acid child (150)
             { 49266, new Tuple<uint, DamageType>(27717, DamageType.Acid) }, // acid child (180)
             { 49267, new Tuple<uint, DamageType>(23568, DamageType.Acid) }, // caustic knight (200)
@@ -397,7 +398,7 @@ namespace ACE.Server.WorldObjects
             { 48959, new Tuple<uint, DamageType>(26692, DamageType.Fire) }, // fire elemental (50)
             { 48961, new Tuple<uint, DamageType>(7993, DamageType.Fire) }, // fire elemental (80)
             { 48963, new Tuple<uint, DamageType>(7994, DamageType.Fire) }, // fire elemental (100)
-            { 48965, new Tuple<uint, DamageType>(12038, DamageType.Fire) }, // fire child (125)
+            { 48965, new Tuple<uint, DamageType>(11538, DamageType.Fire) }, // fire child (125)
             { 48967, new Tuple<uint, DamageType>(27715, DamageType.Fire) }, // fire child (150)
             { 48969, new Tuple<uint, DamageType>(27717, DamageType.Fire) }, // fire child (180)
             { 48957, new Tuple<uint, DamageType>(23568, DamageType.Fire) }, // incendiary knight (200)
@@ -406,7 +407,7 @@ namespace ACE.Server.WorldObjects
             { 49275, new Tuple<uint, DamageType>(26692, DamageType.Cold) }, // frost elemental (50)
             { 49276, new Tuple<uint, DamageType>(7993, DamageType.Cold) }, // frost elemental (80)
             { 49277, new Tuple<uint, DamageType>(7994, DamageType.Cold) }, // frost elemental (100)
-            { 49278, new Tuple<uint, DamageType>(12038, DamageType.Cold) }, // frost child (125)
+            { 49278, new Tuple<uint, DamageType>(11538, DamageType.Cold) }, // frost child (125)
             { 49279, new Tuple<uint, DamageType>(27715, DamageType.Cold) }, // frost child (150)
             { 49280, new Tuple<uint, DamageType>(27717, DamageType.Cold) }, // frost child (180)
             { 49260, new Tuple<uint, DamageType>(23568, DamageType.Cold) }, // glacial knight (200)
@@ -414,7 +415,7 @@ namespace ACE.Server.WorldObjects
             { 49268, new Tuple<uint, DamageType>(26692, DamageType.Electric) }, // lightning elemental (50)
             { 49269, new Tuple<uint, DamageType>(7993, DamageType.Electric) }, // lightning elemental (80)
             { 49270, new Tuple<uint, DamageType>(7994, DamageType.Electric) }, // lightning elemental (100)
-            { 49271, new Tuple<uint, DamageType>(12038, DamageType.Electric) }, // lightning child (125)
+            { 49271, new Tuple<uint, DamageType>(11538, DamageType.Electric) }, // lightning child (125)
             { 49272, new Tuple<uint, DamageType>(27715, DamageType.Electric) }, // lightning child (150)
             { 49273, new Tuple<uint, DamageType>(27717, DamageType.Electric) }, // lightning child (180)
             { 49274, new Tuple<uint, DamageType>(23568, DamageType.Electric) }, // galvanic knight (200)
@@ -487,5 +488,54 @@ namespace ACE.Server.WorldObjects
             { 49322, new Tuple<uint, DamageType>(7127, DamageType.Electric) }, // lightning wisp (180)
             { 49323, new Tuple<uint, DamageType>(25667, DamageType.Electric) }, // voltaic wisp (200)
         };
+
+        /// <summary>
+        /// Returns TRUE if wo is Encapsulated Spirit
+        /// </summary>
+        public static bool IsEncapsulatedSpirit(WorldObject wo)
+        {
+            return wo.WeenieClassId == 49485;
+        }
+
+        /// <summary>
+        /// Applies an encapsulated spirit to a PetDevice
+        /// </summary>
+        public void Refill(Player player, CraftTool spirit)
+        {
+            // TODO: this should be moved to recipe system
+            if (!IsEncapsulatedSpirit(spirit))
+                return;
+
+            if (player.IsBusy) return;
+            player.IsBusy = true;
+
+            var actionChain = new ActionChain();
+
+            // handle switching to peace mode
+            if (player.CombatMode != CombatMode.NonCombat)
+            {
+                var stanceTime = player.SetCombatMode(CombatMode.NonCombat);
+                actionChain.AddDelaySeconds(stanceTime);
+            }
+
+            // perform clapping motion
+            player.EnqueueMotion(actionChain, MotionCommand.ClapHands);
+
+            actionChain.AddAction(player, () =>
+            {
+                player.UpdateProperty(this, PropertyInt.Structure, MaxStructure);
+
+                player.TryConsumeFromInventoryWithNetworking(spirit, 1);
+
+                player.Session.Network.EnqueueSend(new GameMessageSystemChat("You add the spirit to the essence.", ChatMessageType.Broadcast));
+
+                player.SendUseDoneEvent();
+
+                player.IsBusy = false;
+            });
+            player.EnqueueMotion(actionChain, MotionCommand.Ready);
+
+            actionChain.EnqueueChain();
+        }
     }
 }

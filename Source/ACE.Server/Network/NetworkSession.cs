@@ -7,7 +7,9 @@ using System.Linq;
 using System.Net.Sockets;
 using System.Text;
 
+using ACE.Common.Cryptography;
 using ACE.Server.Managers;
+using ACE.Server.Network.Enum;
 using ACE.Server.Network.GameMessages;
 using ACE.Server.Network.Handlers;
 using ACE.Server.Network.Managers;
@@ -57,11 +59,13 @@ namespace ACE.Server.Network
         private readonly ConcurrentDictionary<uint /*seq*/, ServerPacket> cachedPackets = new ConcurrentDictionary<uint /*seq*/, ServerPacket>();
 
         /// <summary>
-        /// This is referenced by one thread:<para />
-        /// WorldManager.UpdateWorld()->Session.Update(lastTick)->This.Update(lastTick) <para />
-        /// Technically, it is referenced ONCE by EnqueueSend when the client first connects to the server, but there's no collision risk at that point.
+        /// This is referenced by multiple thread:<para />
+        /// [ConnectionListener Thread + 0] WorldManager.ProcessPacket()->SendLoginRequestReject()<para />
+        /// [ConnectionListener Thread + 0] WorldManager.ProcessPacket()->Session.ProcessPacket()->NetworkSession.ProcessPacket()->DoRequestForRetransmission()<para />
+        /// [ConnectionListener Thread + 1] WorldManager.ProcessPacket()->Session.ProcessPacket()->NetworkSession.ProcessPacket()-> ... AuthenticationHandler<para />
+        /// [World Manager Thread] WorldManager.UpdateWorld()->Session.Update(lastTick)->This.Update(lastTick)<para />
         /// </summary>
-        private readonly Queue<ServerPacket> packetQueue = new Queue<ServerPacket>();
+        private readonly ConcurrentQueue<ServerPacket> packetQueue = new ConcurrentQueue<ServerPacket>();
 
         public readonly SessionConnectionData ConnectionData = new SessionConnectionData();
 
@@ -86,6 +90,11 @@ namespace ACE.Server.Network
                 currentBundleLocks[i] = new object();
                 currentBundles[i] = new NetworkBundle();
             }
+
+            ConnectionData.CryptoClient.OnCryptoSystemCatastrophicFailure += (sender, e) =>
+            {
+                session.Terminate(SessionTerminationReason.ClientConnectionFailure);
+            };
         }
 
         /// <summary>
@@ -95,6 +104,9 @@ namespace ACE.Server.Network
         /// <param name="messages">One or more GameMessages to send</param>
         public void EnqueueSend(params GameMessage[] messages)
         {
+            if (isReleased) // Session has been removed
+                return;
+
             messages.GroupBy(k => k.Group).ToList().ForEach(k =>
             {
                 var grp = k.First().Group;
@@ -120,6 +132,9 @@ namespace ACE.Server.Network
         /// <param name="packets"></param>
         public void EnqueueSend(params ServerPacket[] packets)
         {
+            if (isReleased) // Session has been removed
+                return;
+
             foreach (var packet in packets)
             {
                 packetLog.DebugFormat("[{0}] Enqueuing Packet {1}", session.LoggingIdentifier, packet.GetHashCode());
@@ -132,6 +147,9 @@ namespace ACE.Server.Network
         /// </summary>
         public void Update()
         {
+            if (isReleased) // Session has been removed
+                return;
+
             for (int i = 0; i < currentBundles.Length; i++)
             {
                 NetworkBundle bundleToSend = null;
@@ -200,23 +218,55 @@ namespace ACE.Server.Network
         /// <param name="packet">The ClientPacket to process.</param>
         public void ProcessPacket(ClientPacket packet)
         {
+            if (isReleased) // Session has been removed
+                return;
+
             packetLog.DebugFormat("[{0}] Processing packet {1}", session.LoggingIdentifier, packet.Header.Sequence);
             NetworkStatistics.C2S_Packets_Aggregate_Increment();
 
-            // If the client is requesting a retransmission, pull those packets from the queue and resend them.
-            if (packet.Header.HasFlag(PacketHeaderFlags.RequestRetransmit))
+            if (!packet.VerifyCRC(ConnectionData.CryptoClient, true))
             {
-                if (VerifyCRC(packet))
-                {
-                    foreach (uint sequence in packet.HeaderOptional.RetransmitData)
-                    {
-                        Retransmit(sequence);
-                    }
-                    NetworkStatistics.C2S_RequestsForRetransmit_Aggregate_Increment();
-                }
                 return;
             }
-           
+
+            #region order-insensitive "half-processing"
+
+            if (packet.Header.HasFlag(PacketHeaderFlags.Disconnect))
+            {
+                session.Terminate(SessionTerminationReason.PacketHeaderDisconnect);
+                return;
+            }
+
+            if (packet.Header.HasFlag(PacketHeaderFlags.NetErrorDisconnect))
+            {
+                session.Terminate(SessionTerminationReason.ClientSentNetworkErrorDisconnect);
+                return;
+            }
+
+            // If the client is requesting a retransmission process it immediately
+            if (packet.Header.HasFlag(PacketHeaderFlags.RequestRetransmit))
+            {
+                foreach (uint sequence in packet.HeaderOptional.RetransmitData)
+                {
+                    Retransmit(sequence);
+                }
+                NetworkStatistics.C2S_RequestsForRetransmit_Aggregate_Increment();
+            }
+
+            // depending on the current session state:
+            // Set the next timeout tick value, to compare against in the WorldManager
+            // Sessions that have gone past the AuthLoginRequest step will stay active for a longer period of time (exposed via configuration) 
+            // Sessions that in the AuthLoginRequest will have a short timeout, as set in the AuthenticationHandler.DefaultAuthTimeout.
+            // Example: Applications that check uptime will stay in the AuthLoginRequest state.
+            session.Network.TimeoutTick = (session.State == SessionState.AuthLoginRequest) ?
+                DateTime.UtcNow.AddSeconds(AuthenticationHandler.DefaultAuthTimeout).Ticks : // Default is 15s
+                DateTime.UtcNow.AddSeconds(WorldManager.DefaultSessionTimeout).Ticks; // Default is 60s
+
+            #endregion
+
+            #region Reordering stage
+
+            // Reordering stage
             // Check if this packet's sequence is a sequence which we have already processed.
             // There are some exceptions:
             // Sequence 0 as we have several Seq 0 packets during connect.  This also cathes a case where it seems CICMDCommand arrives at any point with 0 sequence value too.
@@ -244,12 +294,20 @@ namespace ACE.Server.Network
                 return;
             }
 
-            // If we reach here, this is a packet we should proceed with processing.
-            HandlePacket(packet);
+            #endregion
 
+            #region Final processing stage
+
+            // Processing stage
+            // If we reach here, this is a packet we should proceed with processing.
+            HandleOrderedPacket(packet);
+        
+            // Process data now in sequence
             // Finally check if we have any out of order packets or fragments we need to process;
             CheckOutOfOrderPackets();
             CheckOutOfOrderFragments();
+
+            #endregion
         }
         /// <summary>
         /// request retransmission of lost sequences
@@ -261,13 +319,18 @@ namespace ACE.Server.Network
             List<uint> needSeq = new List<uint>();
             needSeq.Add(desiredSeq);
             uint bottom = desiredSeq + 1;
+            if (rcvdSeq - bottom > CryptoSystem.MaximumEffortLevel)
+            {
+                session.Terminate(SessionTerminationReason.AbnormalSequenceReceived);
+                return;
+            }
             for (uint a = bottom; a < rcvdSeq; a++)
                 if (!outOfOrderPackets.ContainsKey(a))
                     needSeq.Add(a);
 
             ServerPacket reqPacket = new ServerPacket();
             byte[] reqData = new byte[4 + (needSeq.Count * 4)];
-            MemoryStream msReqData = new MemoryStream(reqData);
+            MemoryStream msReqData = new MemoryStream(reqData, 0, reqData.Length, true, true);
             msReqData.Write(BitConverter.GetBytes((uint)needSeq.Count), 0, 4);
             needSeq.ForEach(k => msReqData.Write(BitConverter.GetBytes(k), 0, 4));
             reqPacket.Data = msReqData;
@@ -281,157 +344,14 @@ namespace ACE.Server.Network
         }
         private DateTime LastRequestForRetransmitTime = DateTime.MinValue;
 
-#if NETDIAG
-        private bool GetPastGeneration(Common.Cryptography.ISAAC state, ClientPacket packet, ref int Generation, int limit)
-        {
-            limit--;
-            if (limit < 1)
-            {
-                return false;
-            }
-            Generation--;
-            uint x = state.GetOffset();
-            if (packet.VerifyChecksum(x))
-            {
-                return true;
-            }
-            else
-            {
-                return GetPastGeneration(state.Parent, packet, ref Generation, limit);
-            }
-        }
-        private bool GetFutureGeneration(Common.Cryptography.ISAAC state, ClientPacket packet, ref int Generation, int limit)
-        {
-            limit--;
-            if (limit < 1)
-            {
-                return false;
-            }
-            Generation++;
-            uint x = state.GetOffset();
-            if (packet.VerifyChecksum(x))
-            {
-                return true;
-            }
-            else
-            {
-                return GetFutureGeneration(state, packet, ref Generation, limit);
-            }
-        }
-        private int? GetGeneration(Common.Cryptography.ISAAC state, ClientPacket packet)
-        {
-            int gen = 0;
-            if (GetFutureGeneration(state.Copy(), packet, ref gen, 10))
-            {
-                return gen;
-            }
-            if (GetPastGeneration(state.Copy(), packet, ref gen, 10))
-            {
-                return gen;
-            }
-            return null;
-        }
-        private Common.Cryptography.ISAAC GetGeneration(Common.Cryptography.ISAAC current, int cursor)
-        {
-            if (cursor > 0)
-            {
-                for (int i = 0; i < cursor; i++)
-                {
-                    current.GetOffset();
-                }
-                return current;
-            }
-            else if (cursor < 0)
-            {
-                for (int i = 0; i > cursor; i--)
-                {
-                    current = current.Parent;
-                }
-                return current;
-            }
-            else if (cursor == 0)
-            {
-                return current;
-            }
-            return null;
-        }
-#endif
-        private bool VerifyCRC(ClientPacket packet)
-        {
-            bool encryptedChecksum =
-                !packet.Header.HasFlag(PacketHeaderFlags.RequestRetransmit) &&
-                packet.Header.HasFlag(PacketHeaderFlags.EncryptedChecksum);
-            if (encryptedChecksum)
-            {
-#if NETDIAG
-                int? gen = GetGeneration(ConnectionData.IssacClient, packet);
-                if (gen != null)
-                {
-                    // gen should always be 1 notch forward, but some programming errors have revealed gen to be 2 or more and since fixed
-                    // generational ISSAC helps immensely when troubleshooting certain kinds of protocol problems
-                    ConnectionData.IssacClient = GetGeneration(ConnectionData.IssacClient, gen.Value);
-                    if (gen.Value != 1)
-                    {
-                        packetLog.Warn($"Packet CRC encryption generation out of sequence for packet {packet.Header.Sequence} gen {gen} {UnfoldFlags(packet.Header.Flags)}");
-                    }
-                    packetLog.Debug($"Verified encrypted CRC for packet {packet.Header.Sequence} gen {gen} {UnfoldFlags(packet.Header.Flags)}");
-                    return true;
-                }
-#else
-                if (packet.VerifyChecksum(ConnectionData.IssacClient.GetOffset()))
-                    return true;
-#endif
-            }
-            else
-            {
-                if (packet.VerifyChecksum(0))
-                {
-                    packetLog.Debug($"Verified CRC for packet {packet.Header.Sequence} {UnfoldFlags(packet.Header.Flags)}");
-                    return true;
-                }
-            }
-            NetworkStatistics.C2S_CRCErrors_Aggregate_Increment();
-            return false;
-        }
-        public static string UnfoldFlags(PacketHeaderFlags flags)
-        {
-            List<string> result = new List<string>();
-            foreach (PacketHeaderFlags r in System.Enum.GetValues(typeof(PacketHeaderFlags)))
-            {
-                if ((flags & r) != 0)
-                {
-                    result.Add(r.ToString());
-                }
-            }
-            if (result.Count == 0)
-            {
-                return string.Empty;
-            }
-            return result.Aggregate((a, b) => a + " | " + b);
-        }
-
         /// <summary>
-        /// Handles a packet, reading the flags and processing all fragments.
+        /// Handles a packet<para />
+        /// Packets at this stage are already verified, "half processed", and reordered
         /// </summary>
         /// <param name="packet">ClientPacket to handle</param>
-        private void HandlePacket(ClientPacket packet)
+        private void HandleOrderedPacket(ClientPacket packet)
         {
             packetLog.DebugFormat("[{0}] Handling packet {1}", session.LoggingIdentifier, packet.Header.Sequence);
-
-            if (!VerifyCRC(packet))
-            {
-                //DoRequestForRetransmission(packet.Header.Sequence);
-                return;
-            }
-
-            // depending on the current session state:
-            // Set the next timeout tick value, to compare against in the WorldManager
-            // Sessions that have gone past the AuthLoginRequest step will stay active for a longer period of time (exposed via configuration) 
-            // Sessions that in the AuthLoginRequest will have a short timeout, as set in the AuthenticationHandler.DefaultAuthTimeout.
-            // Example: Applications that check uptime will stay in the AuthLoginRequest state.
-            session.Network.TimeoutTick = (session.State == Enum.SessionState.AuthLoginRequest) ?
-                DateTime.UtcNow.AddSeconds(WorldManager.DefaultSessionTimeout).Ticks :
-                DateTime.UtcNow.AddSeconds(AuthenticationHandler.DefaultAuthTimeout).Ticks;
 
             // If we have an EchoRequest flag, we should flag to respond with an echo response on next send.
             if (packet.Header.HasFlag(PacketHeaderFlags.EchoRequest))
@@ -439,7 +359,7 @@ namespace ACE.Server.Network
 
             // If we have an AcknowledgeSequence flag, we can clear our cached packet buffer up to that sequence.
             if (packet.Header.HasFlag(PacketHeaderFlags.AckSequence))
-                AcknowledgeSequence(packet.HeaderOptional.Sequence);
+                AcknowledgeSequence(packet.HeaderOptional.AckSequence);
 
             if (packet.Header.HasFlag(PacketHeaderFlags.TimeSync))
             {
@@ -460,8 +380,6 @@ namespace ACE.Server.Network
                 AuthenticationHandler.HandleLoginRequest(packet, session);
                 return;
             }
-
-
 
             // Process all fragments out of the packet
             foreach (ClientPacketFragment fragment in packet.Fragments)
@@ -555,7 +473,7 @@ namespace ACE.Server.Network
             while (outOfOrderPackets.TryRemove(lastReceivedPacketSequence + 1, out var packet))
             {
                 packetLog.DebugFormat("[{0}] Ready to handle out-of-order packet {1}", session.LoggingIdentifier, packet.Header.Sequence);
-                HandlePacket(packet);
+                HandleOrderedPacket(packet);
             }
         }
 
@@ -613,15 +531,17 @@ namespace ACE.Server.Network
 
                 SendPacketRaw(cachedPacket);
             }
+            else
+            {
+                log.Error($"retransmit requested packet {sequence} not in cache.");
+            }
         }
 
         private void FlushPackets()
         {
-            while (packetQueue.Count > 0)
+            while (packetQueue.TryDequeue(out var packet))
             {
                 packetLog.DebugFormat("[{0}] Flushing packets, count {1}", session.LoggingIdentifier, packetQueue.Count);
-
-                ServerPacket packet = packetQueue.Dequeue();
 
                 if (packet.Header.HasFlag(PacketHeaderFlags.EncryptedChecksum) && ConnectionData.PacketSequence.CurrentValue == 0)
                     ConnectionData.PacketSequence = new Sequence.UIntSequence(1);
@@ -649,7 +569,7 @@ namespace ACE.Server.Network
 
             if (packet.Header.HasFlag(PacketHeaderFlags.EncryptedChecksum))
             {
-                uint issacXor = session.GetIssacValue(PacketDirection.Server);
+                uint issacXor = ConnectionData.IssacServer.GetOffset();
                 packetLog.DebugFormat("[{0}] Setting Issac for packet {1} to {2}", session.LoggingIdentifier, packet.GetHashCode(), issacXor);
                 packet.IssacXor = issacXor;
             }
@@ -667,9 +587,9 @@ namespace ACE.Server.Network
 
                 packet.CreateReadyToSendPacket(buffer, out var size);
 
-#if NETDIAG
-                payload = NetworkSyntheticTesting.SyntheticCorruption_S2C(payload);
-#endif
+                packetLog.Debug(packet.ToString());
+
+                buffer = NetworkSyntheticTesting.SyntheticCorruption_S2C(buffer);
 
                 if (packetLog.IsDebugEnabled)
                 {
@@ -696,7 +616,7 @@ namespace ACE.Server.Network
                     sb.AppendLine(String.Format("[{5}] Sending Packet (Len: {0}) [{1}:{2}=>{3}:{4}]", buffer.Length, listenerEndpoint.Address, listenerEndpoint.Port, session.EndPoint.Address, session.EndPoint.Port, session.Network.ClientId));
                     log.Error(sb.ToString());
 
-                    session.State = Enum.SessionState.NetworkTimeout; // This will force WorldManager to drop the session
+                    session.Terminate(SessionTerminationReason.SendToSocketException, null, null, ex.Message);
                 }
             }
             finally
@@ -843,6 +763,29 @@ namespace ACE.Server.Network
                 packet.BodyWriter.Write(bundle.ClientTime);
                 packet.BodyWriter.Write((float)ConnectionData.ServerTime - bundle.ClientTime);
             }
+        }
+
+
+        private bool isReleased;
+
+        /// <summary>
+        /// This will empty out arrays, collections and dictionaries, and mark the object as released.
+        /// Any further work assigned to this object will be ignored.
+        /// </summary>
+        public void ReleaseResources()
+        {
+            isReleased = true;
+
+            for (int i = 0; i < currentBundles.Length; i++)
+                currentBundles[i] = null;
+
+            outOfOrderPackets.Clear();
+            partialFragments.Clear();
+            outOfOrderFragments.Clear();
+
+            cachedPackets.Clear();
+
+            packetQueue.Clear();
         }
     }
 }

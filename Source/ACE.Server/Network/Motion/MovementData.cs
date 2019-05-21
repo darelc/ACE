@@ -103,7 +103,11 @@ namespace ACE.Server.Network.Structure
             {
                 if (rawState.ForwardCommand == MotionCommand.WalkForward || rawState.ForwardCommand == MotionCommand.WalkBackwards)
                 {
-                    interpState.ForwardCommand = holdKey == HoldKey.Run ? MotionCommand.RunForward : MotionCommand.WalkForward;
+                    interpState.ForwardCommand = MotionCommand.WalkForward;
+
+                    if (rawState.ForwardCommand == MotionCommand.WalkForward && holdKey == HoldKey.Run)
+                        interpState.ForwardCommand = MotionCommand.RunForward;
+
                     interpState.ForwardSpeed = speed;
 
                     if (rawState.ForwardCommand == MotionCommand.WalkBackwards)
@@ -160,10 +164,12 @@ namespace ACE.Server.Network.Structure
         /// </summary>
         public byte[] Serialize()
         {
-            var stream = new MemoryStream();
-            var writer = new BinaryWriter(stream);
-            writer.Write(this, false);
-            return stream.ToArray();
+            using (var stream = new MemoryStream())
+            using (var writer = new BinaryWriter(stream))
+            {
+                writer.Write(this, false);
+                return stream.ToArray();
+            }
         }
     }
 

@@ -79,12 +79,12 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Returns TRUE if all generator profiles are at init objects created
         /// </summary>
-        public bool AllProfilesInitted { get => GeneratorProfiles.Where(i => i.InitObjectsSpawned).Count() == GeneratorProfiles.Count; }
+        public bool AllProfilesInitted { get => GeneratorProfiles.Count(i => i.InitObjectsSpawned) == GeneratorProfiles.Count; }
 
         /// <summary>
         /// Retunrs TRUE if all generator profiles are at max objects created
         /// </summary>
-        public bool AllProfilesMaxed { get => GeneratorProfiles.Where(i => i.MaxObjectsSpawned).Count() == GeneratorProfiles.Count; }
+        public bool AllProfilesMaxed { get => GeneratorProfiles.Count(i => i.MaxObjectsSpawned) == GeneratorProfiles.Count; }
 
         /// <summary>
         /// Adds initial objects to the spawn queue based on RNG rolls
@@ -291,7 +291,7 @@ namespace ACE.Server.WorldObjects
                 if (CurrentCreate >= InitCreate && !IsLinked)
                 {
                     if (CurrentCreate > InitCreate)
-                        Console.WriteLine($"{Name}.StopConditionsInit(): CurrentCreate({CurrentCreate}) > InitCreate({InitCreate})");
+                        log.Debug($"{WeenieClassId} - 0x{Guid.Full:X8}:{Name}.StopConditionsInit(): CurrentCreate({CurrentCreate}) > InitCreate({InitCreate})");
 
                     return true;
                 }
@@ -309,7 +309,7 @@ namespace ACE.Server.WorldObjects
                 if (CurrentCreate >= MaxCreate && MaxCreate != 0 && !IsLinked)
                 {
                     if (CurrentCreate > MaxCreate && MaxCreate != 0)
-                        Console.WriteLine($"{Name}.StopConditionsMax(): CurrentCreate({CurrentCreate}) > MaxCreate({MaxCreate})");
+                        log.Debug($"{WeenieClassId} - 0x{Guid.Full:X8}:{Name}.StopConditionsMax(): CurrentCreate({CurrentCreate}) > MaxCreate({MaxCreate})");
 
                     return true;
                 }
@@ -343,9 +343,12 @@ namespace ACE.Server.WorldObjects
 
             var now = (int)Time.GetUnixTime();
 
-            GeneratorDisabled = (now < GeneratorStartTime) || (now > GeneratorEndTime);
+            var start = (now < GeneratorStartTime) && (GeneratorStartTime > 0);
+            var end = (now > GeneratorEndTime) && (GeneratorEndTime > 0);
 
-            HandleStatus(prevDisabled);
+            //GeneratorDisabled = ((now < GeneratorStartTime) && (GeneratorStartTime > 0)) || ((now > GeneratorEndTime) && (GeneratorEndTime > 0));
+
+            HandleStatus(prevDisabled, start, end);
         }
 
         /// <summary>
@@ -353,7 +356,7 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public void CheckEventStatus()
         {
-            if (GeneratorEvent == null || GeneratorEvent == "")
+            if (string.IsNullOrEmpty(GeneratorEvent))
                 return;
 
             var prevState = GeneratorDisabled;
@@ -364,23 +367,53 @@ namespace ACE.Server.WorldObjects
             var enabled = EventManager.IsEventEnabled(GeneratorEvent);
             var started = EventManager.IsEventStarted(GeneratorEvent);
 
-            GeneratorDisabled = !enabled || !started;
+            //GeneratorDisabled = !enabled || !started;
 
-            HandleStatus(prevState);
+            HandleStatus(prevState, enabled, started);
         }
+
+        private bool armed = false;
 
         /// <summary>
         /// Handles starting/stopping the generator
         /// </summary>
-        public void HandleStatus(bool prevDisabled)
+        public void HandleStatus(bool prevDisabled, bool cond1, bool cond2)
         {
-            if (prevDisabled == GeneratorDisabled)
-                return;     // no state change
+            //if (prevDisabled == GeneratorDisabled)
+            //    return;     // no state change
 
-            if (prevDisabled)
-                StartGenerator();
+            var change = false;
+            switch (GeneratorTimeType)
+            {
+                case GeneratorTimeType.RealTime:
+                    change = cond1 || cond2;
+                    break;
+                case GeneratorTimeType.Event:
+                    change = !cond1 || !cond2;
+                    break;
+            }
+
+            //if (!GeneratorEnteredWorld)
+            //    armed = true;
+
+            if (armed)
+            {
+                //var prevState = GeneratorDisabled;
+                GeneratorDisabled = change;
+
+                if (!GeneratorDisabled)
+                    StartGenerator();
+                else
+                    DisableGenerator();
+
+                //GeneratorDisabled = change;
+                armed = false;
+            }
             else
-                DisableGenerator();
+            {
+                if (prevDisabled != change)
+                    armed = true;
+            }
         }
 
         /// <summary>
@@ -410,15 +443,15 @@ namespace ACE.Server.WorldObjects
                     {
                         foreach (var rNode in generator.Spawned.Values)
                         {
-                            if (rNode.WorldObject is Creature)
-                            {
-                                var wo = rNode.WorldObject as Creature;
-                                wo.Smite(this);
-                            }
+                            var wo = rNode.TryGetWorldObject();
+
+                            if (wo is Creature creature)
+                                creature.Smite(this);
                         }
 
                         generator.Spawned.Clear();
                         generator.SpawnQueue.Clear();
+                        CurrentCreate = 0;
                     }
                     break;
                 case GeneratorDestruct.Nothing:
@@ -428,10 +461,16 @@ namespace ACE.Server.WorldObjects
                     foreach (var generator in GeneratorProfiles)
                     {
                         foreach (var rNode in generator.Spawned.Values)
-                            rNode.WorldObject.Destroy();
+                        {
+                            var wo = rNode.TryGetWorldObject();
+
+                            if (wo != null)
+                                wo.Destroy();
+                        }
 
                         generator.Spawned.Clear();
                         generator.SpawnQueue.Clear();
+                        CurrentCreate = 0;
                     }
                     break;
             }
@@ -493,7 +532,8 @@ namespace ACE.Server.WorldObjects
         }
 
         /// <summary>
-        /// Called every ~5 seconds for object generators
+        /// Called every [RegenerationInterval] seconds<para />
+        /// Also called from EmoteManager, Chest.Reset(), WorldObject.OnGenerate()
         /// </summary>
         public void Generator_HeartBeat()
         {
@@ -501,6 +541,9 @@ namespace ACE.Server.WorldObjects
 
             if (!FirstEnterWorldDone)
                 FirstEnterWorldDone = true;
+
+            foreach (var generator in GeneratorProfiles)
+                generator.Maintenance_HeartBeat();
 
             CheckGeneratorStatus();
 
@@ -523,7 +566,7 @@ namespace ACE.Server.WorldObjects
             }
 
             foreach (var generator in GeneratorProfiles)
-                generator.HeartBeat();
+                generator.Spawn_HeartBeat();
         }
     }
 }

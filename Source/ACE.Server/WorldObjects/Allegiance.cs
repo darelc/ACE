@@ -131,7 +131,7 @@ namespace ACE.Server.WorldObjects
 
             Members.Add(node.PlayerGuid, node);
 
-            foreach (var vassal in node.Vassals)
+            foreach (var vassal in node.Vassals.Values)
                 BuildMembers(vassal);
         }
 
@@ -229,11 +229,11 @@ namespace ACE.Server.WorldObjects
             switch (officerRank)
             {
                 case AllegianceOfficerLevel.Speaker:
-                    return AllegianceSpeakerTitle ?? "Speaker";
+                    return string.IsNullOrEmpty(AllegianceSpeakerTitle) ? "Speaker" : AllegianceSpeakerTitle;
                 case AllegianceOfficerLevel.Seneschal:
-                    return AllegianceSeneschalTitle ?? "Seneschal";
+                    return string.IsNullOrEmpty(AllegianceSeneschalTitle) ? "Seneschal" : AllegianceSeneschalTitle;
                 case AllegianceOfficerLevel.Castellan:
-                    return AllegianceCastellanTitle ?? "Castellan";
+                    return string.IsNullOrEmpty(AllegianceCastellanTitle) ? "Castellan" : AllegianceCastellanTitle;
                 default:
                     return "";
             }
@@ -290,6 +290,10 @@ namespace ACE.Server.WorldObjects
                 var player = PlayerManager.FindByGuid(member.Key);
                 var onlinePlayer = PlayerManager.GetOnlinePlayer(member.Key);
 
+                if (player == null) continue;
+
+                var updated = false;
+
                 // if changed, update monarch id
                 if ((player.MonarchId ?? 0) != member.Value.Allegiance.MonarchId)
                 {
@@ -297,6 +301,8 @@ namespace ACE.Server.WorldObjects
 
                     if (onlinePlayer != null)
                         onlinePlayer.Session.Network.EnqueueSend(new GameMessagePrivateUpdateInstanceID(onlinePlayer, PropertyInstanceId.Monarch, player.MonarchId.Value));
+
+                    updated = true;
                 }
 
                 // if changed, update rank
@@ -306,11 +312,34 @@ namespace ACE.Server.WorldObjects
 
                     if (onlinePlayer != null)
                         onlinePlayer.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(onlinePlayer, PropertyInt.AllegianceRank, player.AllegianceRank.Value));
+
+                    updated = true;
                 }
+
+                if (updated)
+                    player.SaveBiotaToDatabase();
 
                 if (onlinePlayer != null)
                     onlinePlayer.Session.Network.EnqueueSend(new GameEventAllegianceUpdate(onlinePlayer.Session, this, member.Value), new GameEventAllegianceAllegianceUpdateDone(onlinePlayer.Session));
             }
+        }
+
+        public void ShowMembers()
+        {
+            Console.WriteLine($"Total members: {Members.Count}");
+
+            foreach (var member in Members)
+            {
+                var player = PlayerManager.FindByGuid(member.Key, out bool isOnline);
+                var prefix = isOnline ? "* " : "";
+
+                Console.WriteLine($"{prefix}{player.Name}");
+            }
+        }
+
+        public void ShowInfo()
+        {
+            Monarch.ShowInfo();
         }
     }
 }

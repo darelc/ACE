@@ -13,6 +13,19 @@ namespace ACE.Server.Managers
 {
     public class EnchantmentManagerWithCaching : EnchantmentManager
     {
+        private bool? hasEnchantments;
+
+        public override bool HasEnchantments
+        {
+            get
+            {
+                if (hasEnchantments == null)
+                    hasEnchantments = base.HasEnchantments;
+
+                return hasEnchantments.Value;
+            }
+        }
+
         /// <summary>
         /// Constructs a new EnchantmentManager for a WorldObject
         /// </summary>
@@ -103,8 +116,12 @@ namespace ACE.Server.Managers
 
         private void ClearCache()
         {
+            hasEnchantments = null;
+
             attributeModCache.Clear();
-            vitalModCache.Clear();
+            vitalModAdditiveCache.Clear();
+            vitalModMultiplierCache.Clear();
+
             skillModCache.Clear();
 
             bodyArmorModCache = null;
@@ -113,8 +130,8 @@ namespace ACE.Server.Managers
             vulnerabilityResistanceModCache.Clear();
             regenerationModCache.Clear();
 
+            damageBonusCache = null;
             damageModCache = null;
-            damageModifierCache = null;
             attackModCache = null;
             weaponSpeedModCache = null;
             defenseModCache = null;
@@ -123,10 +140,8 @@ namespace ACE.Server.Managers
             varianceModCache = null;
             armorModCache = null;
             armorModVsTypeModCache.Clear();
-
-            damageRatingCache = null;
-            damageResistRatingCache = null;
-            healingResistRatingModCache = null;
+            ratingCache.Clear();
+            xpModCache = null;
         }
 
 
@@ -147,19 +162,35 @@ namespace ACE.Server.Managers
             return value;
         }
 
-        private readonly Dictionary<CreatureVital, float> vitalModCache = new Dictionary<CreatureVital, float>();
+        private readonly Dictionary<CreatureVital, float> vitalModAdditiveCache = new Dictionary<CreatureVital, float>();
+        private readonly Dictionary<CreatureVital, float> vitalModMultiplierCache = new Dictionary<CreatureVital, float>();
 
         /// <summary>
-        /// Gets the direct modifiers to a vital / secondary attribute
+        /// Gets the additive modifiers to a vital / secondary attribute
         /// </summary>
-        public override float GetVitalMod(CreatureVital vital)
+        public override float GetVitalMod_Additives(CreatureVital vital)
         {
-            if (vitalModCache.TryGetValue(vital, out var value))
+            if (vitalModAdditiveCache.TryGetValue(vital, out var value))
                 return value;
 
-            value = base.GetVitalMod(vital);
+            value = base.GetVitalMod_Additives(vital);
 
-            vitalModCache[vital] = value;
+            vitalModAdditiveCache[vital] = value;
+
+            return value;
+        }
+
+        /// <summary>
+        /// Gets the multiplicative modifiers to a vital / secondary attribute
+        /// </summary>
+        public override float GetVitalMod_Multiplier(CreatureVital vital)
+        {
+            if (vitalModMultiplierCache.TryGetValue(vital, out var value))
+                return value;
+
+            value = base.GetVitalMod_Multiplier(vital);
+
+            vitalModMultiplierCache[vital] = value;
 
             return value;
         }
@@ -267,12 +298,27 @@ namespace ACE.Server.Managers
         }
 
 
-        private int? damageModCache;
+        private int? damageBonusCache;
 
         /// <summary>
         /// Returns the weapon damage modifier, ie. Blood Drinker
         /// </summary>
-        public override int GetDamageMod()
+        public override int GetDamageBonus()
+        {
+            if (damageBonusCache.HasValue)
+                return damageBonusCache.Value;
+
+            damageBonusCache = base.GetDamageBonus();
+
+            return damageBonusCache.Value;
+        }
+
+        private float? damageModCache;
+
+        /// <summary>
+        /// Returns the DamageMod for bow / crossbow
+        /// </summary>
+        public override float GetDamageMod()
         {
             if (damageModCache.HasValue)
                 return damageModCache.Value;
@@ -280,21 +326,6 @@ namespace ACE.Server.Managers
             damageModCache = base.GetDamageMod();
 
             return damageModCache.Value;
-        }
-
-        private float? damageModifierCache;
-
-        /// <summary>
-        /// Returns the DamageMod for bow / crossbow
-        /// </summary>
-        public override float GetDamageModifier()
-        {
-            if (damageModifierCache.HasValue)
-                return damageModifierCache.Value;
-
-            damageModifierCache = base.GetDamageModifier();
-
-            return damageModifierCache.Value;
         }
 
         private float? attackModCache;
@@ -420,47 +451,38 @@ namespace ACE.Server.Managers
             return value;
         }
 
+        private readonly Dictionary<PropertyInt, int> ratingCache = new Dictionary<PropertyInt, int>();
 
-        private int? damageRatingCache;
-
-        /// <summary>
-        /// Returns the damage rating modifier from enchantments as an int rating (additive)
-        /// </summary>
-        public override int GetDamageRating()
+        public override int GetRating(PropertyInt property)
         {
-            if (damageRatingCache.HasValue)
-                return damageRatingCache.Value;
+            if (ratingCache.TryGetValue(property, out var value))
+                return value;
 
-            damageRatingCache = base.GetDamageRating();
+            value = base.GetRating(property);
 
-            return damageRatingCache.Value;
+            ratingCache[property] = value;
+
+            return value;
         }
 
-        private int? damageResistRatingCache;
+        private float? xpModCache;
 
-        public override int GetDamageResistRating()
+        public override float GetXPMod()
         {
-            if (damageResistRatingCache.HasValue)
-                return damageResistRatingCache.Value;
+            if (xpModCache == null)
+                xpModCache = base.GetXPMod();
 
-            damageResistRatingCache = base.GetDamageResistRating();
-
-            return damageResistRatingCache.Value;
+            return xpModCache.Value;
         }
 
-        private float? healingResistRatingModCache;
-
-        /// <summary>
-        /// Returns the healing resistance rating enchantment modifier
-        /// </summary>
-        public override float GetHealingResistRatingMod()
+        public override bool StartCooldown(WorldObject item)
         {
-            if (healingResistRatingModCache.HasValue)
-                return healingResistRatingModCache.Value;
+            var result = base.StartCooldown(item);
 
-            healingResistRatingModCache = base.GetHealingResistRatingMod();
+            if (result)
+                ClearCache();
 
-            return healingResistRatingModCache.Value;
+            return result;
         }
     }
 }

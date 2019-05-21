@@ -99,6 +99,9 @@ namespace ACE.Server.WorldObjects
             // launch projectile
             actionChain.AddAction(this, () =>
             {
+                // handle self-procs
+                TryProcEquippedItems(this, true);
+
                 var sound = GetLaunchMissileSound(weapon);
                 EnqueueBroadcast(new GameMessageSound(Guid, sound, 1.0f));
 
@@ -118,6 +121,7 @@ namespace ACE.Server.WorldObjects
             {
                 actionChain.AddAction(this, () =>
                 {
+                    Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "You are out of ammunition!"));
                     SetCombatMode(CombatMode.NonCombat);
                 });
 
@@ -142,7 +146,7 @@ namespace ACE.Server.WorldObjects
             {
                 Session.Network.EnqueueSend(new GameEventAttackDone(Session));
 
-                if (creature.IsAlive && GetCharacterOption(CharacterOption.AutoRepeatAttacks))
+                if (creature.IsAlive && GetCharacterOption(CharacterOption.AutoRepeatAttacks) && !IsBusy)
                 {
                     Session.Network.EnqueueSend(new GameEventCombatCommenceAttack(Session));
                     Session.Network.EnqueueSend(new GameEventAttackDone(Session));
@@ -179,6 +183,17 @@ namespace ACE.Server.WorldObjects
                 case ACE.Entity.Enum.AttackHeight.Low: return 3.0f;
             }
             return 2.0f;
+        }
+
+        public override void UpdateAmmoAfterLaunch(WorldObject ammo)
+        {
+            // hide previously held ammo
+            EnqueueBroadcast(new GameMessagePickupEvent(ammo));
+
+            if (ammo.StackSize == 1)
+                TryDequipObjectWithNetworking(ammo.Guid, out _, DequipObjectAction.ConsumeItem);
+            else
+                TryConsumeFromInventoryWithNetworking(ammo, 1);
         }
     }
 }

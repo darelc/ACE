@@ -13,6 +13,7 @@ using ACE.Server.Entity;
 using ACE.Server.Entity.Actions;
 using ACE.Server.Factories;
 using ACE.Server.Network.GameEvent.Events;
+using ACE.Server.Managers;
 
 namespace ACE.Server.WorldObjects
 {
@@ -31,11 +32,36 @@ namespace ACE.Server.WorldObjects
         // unique items purchased from other players
         public readonly Dictionary<ObjectGuid, WorldObject> UniqueItemsForSale = new Dictionary<ObjectGuid, WorldObject>();
 
-        public Dictionary<ObjectGuid, WorldObject> AllItemsForSale => DefaultItemsForSale.Concat(UniqueItemsForSale).ToDictionary(i => i.Key, i => i.Value);
+        //public Dictionary<ObjectGuid, WorldObject> AllItemsForSale => DefaultItemsForSale.Concat(UniqueItemsForSale).ToDictionary(i => i.Key, i => i.Value);
+
+        public Dictionary<ObjectGuid, WorldObject> AllItemsForSale
+        {
+            get
+            {
+                var allItems = new Dictionary<ObjectGuid, WorldObject>();
+
+                foreach (var item in DefaultItemsForSale)
+                    allItems.TryAdd(item.Key, item.Value);
+
+                foreach (var item in UniqueItemsForSale)
+                {
+                    if (!allItems.TryAdd(item.Key, item.Value))
+                        log.Error($"{Name} ({Guid}) AllItemsForSale: has duplicate item {item.Value.Name} ({item.Value.Guid})");
+                }
+
+                return allItems;
+            }
+        }
 
         private bool inventoryloaded;
 
         public Player LastPlayer;
+
+        public uint? AlternateCurrency
+        {
+            get => GetProperty(PropertyDataId.AlternateCurrency);
+            set { if (!value.HasValue) RemoveProperty(PropertyDataId.AlternateCurrency); else SetProperty(PropertyDataId.AlternateCurrency, value.Value); }
+        }
 
         /// <summary>
         /// A new biota be created taking all of its values from weenie.
@@ -89,6 +115,8 @@ namespace ACE.Server.WorldObjects
         {
             var vendorList = AllItemsForSale.Values.ToList();
 
+            vendorList = RotUniques(vendorList);
+
             player.Session.Network.EnqueueSend(new GameEventApproachVendor(player.Session, this, vendorList));
 
             var rotateTime = Rotate(player); // vendor rotates to player
@@ -96,7 +124,36 @@ namespace ACE.Server.WorldObjects
             if (action != VendorType.Undef)
                 DoVendorEmote(action, player);
 
-            player.lastUsedContainerId = Guid;
+            player.LastOpenedContainerId = Guid;
+        }
+
+        private List<WorldObject> RotUniques(List<WorldObject> worldObjects)
+        {
+            var results = new List<WorldObject>();
+
+            foreach(var wo in worldObjects)
+            {
+                var soldTime = wo.GetProperty(PropertyFloat.SoldTimestamp);
+                if (!soldTime.HasValue)
+                {
+                    results.Add(wo);
+                    continue;
+                }
+
+                var rottime = Common.Time.GetDateTimeFromTimestamp(soldTime.Value);
+
+                rottime = rottime.AddSeconds(PropertyManager.GetDouble("vendor_unique_rot_time", 300).Item);
+
+                if (DateTime.UtcNow < rottime)
+                    results.Add(wo);
+                else
+                {
+                    UniqueItemsForSale.Remove(wo.Guid);
+                    log.Info($"Vendor {Name} has discontinued sale of {wo.Name} and removed it from its UniqueItemsForSale list.");
+                }
+            }
+
+            return results;
         }
 
         /// <summary>
@@ -208,8 +265,8 @@ namespace ACE.Server.WorldObjects
 
             if (dist > UseRadius)
             {
-                if (LastPlayer.lastUsedContainerId == Guid)
-                    LastPlayer.lastUsedContainerId = new ObjectGuid(0);
+                if (LastPlayer.LastOpenedContainerId == Guid)
+                    LastPlayer.LastOpenedContainerId = ObjectGuid.Invalid;
 
                 EmoteManager.DoVendorEmote(VendorType.Close, LastPlayer);
                 LastPlayer = null;
@@ -288,6 +345,7 @@ namespace ACE.Server.WorldObjects
             List<WorldObject> genlist = new List<WorldObject>();
 
             uint goldcost = 0;
+            uint altcost = 0;
 
             // filter items out vendor no longer has in stock or never had in stock
             foreach (ItemProfile item in items)
@@ -306,6 +364,7 @@ namespace ACE.Server.WorldObjects
                 {
                     if (UniqueItemsForSale.TryGetValue(new ObjectGuid(item.ObjectGuid), out var wo))
                     {
+                        wo.RemoveProperty(PropertyFloat.SoldTimestamp);
                         uqlist.Add(wo);
                         UniqueItemsForSale.Remove(new ObjectGuid(item.ObjectGuid));
                     }
@@ -325,20 +384,25 @@ namespace ACE.Server.WorldObjects
                 if (wo.ItemType == ItemType.PromissoryNote)
                     sellRate = 1.15;
 
-                goldcost += (uint)Math.Ceiling((wo.Value ?? 0) * sellRate - 0.1);
+                goldcost += Math.Max(1, (uint)Math.Ceiling((wo.Value ?? 0) * sellRate - 0.1));
             }
 
             foreach (WorldObject wo in genlist)
             {
-                var sellRate = SellPrice ?? 1.0;
-                if (wo.ItemType == ItemType.PromissoryNote)
-                    sellRate = 1.15;
+                if (AlternateCurrency == null)
+                {
+                    var sellRate = SellPrice ?? 1.0;
+                    if (wo.ItemType == ItemType.PromissoryNote)
+                        sellRate = 1.15;
 
-                goldcost += (uint)Math.Ceiling((wo.Value ?? 0) * sellRate - 0.1);
+                    goldcost += Math.Max(1, (uint)Math.Ceiling((wo.Value ?? 0) * sellRate - 0.1));
+                }
+                else
+                    altcost += (uint)((wo.StackSize ?? 1) * (wo.StackUnitValue ?? 1));
             }
 
             // send transaction to player for further processing and.
-            player.FinalizeBuyTransaction(this, uqlist, genlist, true, goldcost);
+            player.FinalizeBuyTransaction(this, uqlist, genlist, goldcost, altcost);
         }
 
         /// <summary>
@@ -355,10 +419,8 @@ namespace ACE.Server.WorldObjects
                         UniqueItemsForSale.Add(wo.Guid, wo);
                 }
             }
-
             ApproachVendor(player, VendorType.Buy);
         }
-
 
         // ==========================
         // Helper Functions - Selling
@@ -376,7 +438,7 @@ namespace ACE.Server.WorldObjects
                     buyRate = 1.0;
 
                 // payout scaled by the vendor's buy rate
-                payout += (int)Math.Floor((wo.Value ?? 0) * buyRate + 0.1);
+                payout += Math.Max(1, (int)Math.Floor((wo.Value ?? 0) * buyRate + 0.1));
             }
 
             return payout;
@@ -405,7 +467,14 @@ namespace ACE.Server.WorldObjects
                 {
                     item.ContainerId = Guid.Full;
 
-                    UniqueItemsForSale.Add(item.Guid, item);
+                    if (!UniqueItemsForSale.TryAdd(item.Guid, item))
+                    {
+                        log.Error($"{Name}.ProcessItemsForPurchase({player.Name}): duplicate item found");
+                        foreach (var i in items)
+                            log.Error($"{i.Name} ({i.Guid})");
+                    }
+
+                    item.SetProperty(PropertyFloat.SoldTimestamp, Common.Time.GetUnixTime());
 
                     // remove object from shard db, but keep a reference to it in memory
                     // for DestroyOnSell items, these will effectively be destroyed immediately

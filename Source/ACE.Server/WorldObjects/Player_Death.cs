@@ -33,15 +33,28 @@ namespace ACE.Server.WorldObjects
         {
             var deathMessage = base.OnDeath(lastDamager, damageType, criticalHit);
 
-            lastDamager.EmoteManager.OnKill(this);
+            if (lastDamager != null)
+                lastDamager.EmoteManager.OnKill(this);
 
-            var playerMsg = string.Format(deathMessage.Victim, Name, lastDamager.Name);
+            var playerMsg = "";
+            if (lastDamager != null)
+                playerMsg = string.Format(deathMessage.Victim, Name, lastDamager.Name);
+            else
+                playerMsg = deathMessage.Victim;
+
             var msgYourDeath = new GameEventYourDeath(Session, playerMsg);
             Session.Network.EnqueueSend(msgYourDeath);
 
             // broadcast to nearby players
-            var nearbyMsg = string.Format(deathMessage.Broadcast, Name, lastDamager.Name);
+            var nearbyMsg = "";
+            if (lastDamager != null)
+                nearbyMsg = string.Format(deathMessage.Broadcast, Name, lastDamager.Name);
+            else
+                nearbyMsg = deathMessage.Broadcast;
+
             var broadcastMsg = new GameMessageSystemChat(nearbyMsg, ChatMessageType.Broadcast);
+
+            log.Info(nearbyMsg);
 
             var excludePlayers = new List<Player>();
             if (lastDamager is Player lastDamagerPlayer)
@@ -162,7 +175,7 @@ namespace ACE.Server.WorldObjects
         public void TeleportOnDeath()
         {
             // teleport to sanctuary or best location
-            var newPosition = Sanctuary ?? LastPortal ?? Location;
+            var newPosition = Sanctuary ?? Instantiation ?? Location;
 
             Teleport(newPosition);
 
@@ -423,13 +436,20 @@ namespace ACE.Server.WorldObjects
 
             // handle items with BondedStatus.Slippery: always drop on death
             var slipperyItems = GetSlipperyItems();
-            dropItems.AddRange(slipperyItems);
+
+            foreach (var item in slipperyItems)
+            {
+                if (TryRemoveFromInventoryWithNetworking(item.Guid, out _, RemoveFromInventoryAction.ToCorpseOnDeath) || TryDequipObjectWithNetworking(item.Guid, out _, DequipObjectAction.ToCorpseOnDeath))
+                    dropItems.Add(item);
+            }
+
+            var destroyCoins = PropertyManager.GetBool("corpse_destroy_pyreals").Item;
 
             // add items to corpse
             foreach (var dropItem in dropItems)
             {
                 // coins already removed from SpendCurrency
-                if (dropItem.WeenieType == WeenieType.Coin)
+                if (destroyCoins && dropItem.WeenieType == WeenieType.Coin)
                     continue;
 
                 if (!corpse.TryAddToInventory(dropItem))
@@ -445,10 +465,27 @@ namespace ACE.Server.WorldObjects
             dropItems.AddRange(destroyedItems);
 
             // send network messages
-            var dropList = DropMessage(dropItems);
+            var dropList = DropMessage(dropItems, numCoinsDropped);
             Session.Network.EnqueueSend(new GameMessageSystemChat(dropList, ChatMessageType.WorldBroadcast));
 
+            DeathItemLog(dropItems);
+
             return dropItems;
+        }
+
+        public void DeathItemLog(List<WorldObject> dropItems)
+        {
+            if (dropItems.Count == 0)
+                return;
+
+            var msg = $"{Name} dropped items on corpse: ";
+
+            foreach (var dropItem in dropItems)
+                msg += $"{dropItem.Name} ({dropItem.Guid.Full:X8}), ";
+
+            msg = msg.Substring(0, msg.Length - 2);
+
+            log.Info(msg);
         }
 
         /// <summary>
@@ -522,13 +559,19 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Builds the network text message for list of items dropped
         /// </summary>
-        public string DropMessage(List<WorldObject> dropItems)
+        public string DropMessage(List<WorldObject> dropItems, int numCoinsDropped)
         {
             var msg = "";
+            var coinMsg = true;
 
             for (var i = 0; i < dropItems.Count; i++)
             {
                 var dropItem = dropItems[i];
+
+                var isCoin = dropItem.Name.Equals("Pyreal");
+
+                if (isCoin && !coinMsg)
+                    continue;
 
                 if (i == 0)
                     msg += "You've lost ";
@@ -540,10 +583,14 @@ namespace ACE.Server.WorldObjects
                         msg += "and ";
                 }
 
-                if (!dropItem.Name.Equals("Pyreal"))
-                    msg += "your ";
-
                 var stackSize = dropItem.StackSize ?? 1;
+                if (isCoin)
+                {
+                    stackSize = numCoinsDropped;
+                    coinMsg = false;
+                }
+                else
+                    msg += "your ";
 
                 if (stackSize == 1)
                     msg += dropItem.Name;
