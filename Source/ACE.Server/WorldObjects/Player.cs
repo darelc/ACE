@@ -44,6 +44,10 @@ namespace ACE.Server.WorldObjects
 
         public SquelchDB Squelches;
 
+        public ConfirmationManager ConfirmationManager;
+
+        public float CurrentRadarRange => Location.Indoors ? 25.0f : 75.0f;
+
         /// <summary>
         /// A new biota be created taking all of its values from weenie.
         /// </summary>
@@ -134,6 +138,8 @@ namespace ACE.Server.WorldObjects
 
             QuestManager = new QuestManager(this);
 
+            ConfirmationManager = new ConfirmationManager(this);
+
             LastUseTracker = new Dictionary<int, DateTime>();
 
             LootPermission = new Dictionary<ObjectGuid, DateTime>();
@@ -210,12 +216,6 @@ namespace ACE.Server.WorldObjects
         /// This tracks the contract tracker objects
         /// </summary>
         public Dictionary<uint, ContractTracker> TrackedContracts { get; set; }
-
-
-        public void CompleteConfirmation(ConfirmationType confirmationType, uint contextId)
-        {
-            Session.Network.EnqueueSend(new GameEventConfirmationDone(Session, confirmationType, contextId));
-        }
 
 
         public MotionStance stance = MotionStance.NonCombat;
@@ -867,6 +867,24 @@ namespace ACE.Server.WorldObjects
         }
 
         /// <summary>
+        /// Returns a modifier for a player's Run, Jump, Melee Defense, and Missile Defense skills if they are overburdened
+        /// </summary>
+        public override float GetBurdenMod()
+        {
+            var strength = Strength.Current;
+
+            var capacity = EncumbranceSystem.EncumbranceCapacity((int)strength, AugmentationIncreasedCarryingCapacity);
+
+            var burden = EncumbranceSystem.GetBurden(capacity, EncumbranceVal ?? 0);
+
+            var burdenMod = EncumbranceSystem.GetBurdenMod(burden);
+
+            //Console.WriteLine($"Burden mod: {burdenMod}");
+
+            return burdenMod;
+        }
+
+        /// <summary>
         /// Method used to perform the animation, sound, and vital update on consumption of food or potions
         /// </summary>
         /// <param name="consumableName">Name of the consumable</param>
@@ -995,10 +1013,10 @@ namespace ACE.Server.WorldObjects
             // send CO network messages for admin objects
             if (Adminvision && oldState != Adminvision)
             {
-                var adminObjs = PhysicsObj.ObjMaint.ObjectTable.Values.Where(o => o.WeenieObj.WorldObject.Visibility);
+                var adminObjs = PhysicsObj.ObjMaint.ObjectTable.Values.Where(o => o.WeenieObj.WorldObject != null && o.WeenieObj.WorldObject.Visibility);
                 PhysicsObj.enqueue_objs(adminObjs);
 
-                var nodrawObjs = PhysicsObj.ObjMaint.ObjectTable.Values.Where(o => (o.WeenieObj.WorldObject.NoDraw ?? false) || (o.WeenieObj.WorldObject.UiHidden ?? false));
+                var nodrawObjs = PhysicsObj.ObjMaint.ObjectTable.Values.Where(o => o.WeenieObj.WorldObject != null && ((o.WeenieObj.WorldObject.NoDraw ?? false) || (o.WeenieObj.WorldObject.UiHidden ?? false)));
                 foreach (var wo in nodrawObjs)
                     Session.Network.EnqueueSend(new GameMessageUpdateObject(wo.WeenieObj.WorldObject, Adminvision, Adminvision ? true : false));
 
