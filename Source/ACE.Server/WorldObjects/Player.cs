@@ -18,7 +18,6 @@ using ACE.Server.Network;
 using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.Network.Structure;
-using ACE.Server.WorldObjects.Entity;
 using ACE.Server.Physics.Animation;
 using ACE.Server.Physics.Common;
 
@@ -200,17 +199,6 @@ namespace ACE.Server.WorldObjects
         // ******************************************************************* OLD CODE BELOW ********************************
         // ******************************************************************* OLD CODE BELOW ********************************
         // ******************************************************************* OLD CODE BELOW ********************************
-
-        /// <summary>
-        /// Enum used for the DoEatOrDrink() method
-        /// </summary>
-        public enum ConsumableBuffType : uint
-        {
-            Spell = 0,
-            Health = 2,
-            Stamina = 4,
-            Mana = 6
-        }
 
         /// <summary>
         /// This tracks the contract tracker objects
@@ -439,7 +427,30 @@ namespace ACE.Server.WorldObjects
         /// Do the player log out work.<para />
         /// If you want to force a player to logout, use Session.LogOffPlayer().
         /// </summary>
-        public void LogOut(bool clientSessionTerminatedAbruptly = false)
+        public bool LogOut(bool clientSessionTerminatedAbruptly = false)
+        {
+            if (PKLogoutActive)
+            {
+                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.YouHaveBeenInPKBattleTooRecently));
+                Session.Network.EnqueueSend(new GameMessageSystemChat("Logging out in 20s...", ChatMessageType.Magic));
+
+                var actionChain = new ActionChain();
+                actionChain.AddDelaySeconds(20.0f);
+                actionChain.AddAction(this, () =>
+                {
+                    LogOut_Inner(clientSessionTerminatedAbruptly);
+                    Session.logOffRequestTime = DateTime.UtcNow;
+                });
+                actionChain.EnqueueChain();
+                return false;
+            }
+
+            LogOut_Inner(clientSessionTerminatedAbruptly);
+
+            return true;
+        }
+
+        public void LogOut_Inner(bool clientSessionTerminatedAbruptly = false)
         {
             if (Fellowship != null)
                 FellowshipQuit(false);
@@ -449,7 +460,7 @@ namespace ACE.Server.WorldObjects
                 var tradePartner = PlayerManager.GetOnlinePlayer(TradePartner);
 
                 if (tradePartner != null)
-                    tradePartner.HandleActionCloseTradeNegotiations(tradePartner.Session);                
+                    tradePartner.HandleActionCloseTradeNegotiations(tradePartner.Session);
             }
 
             if (!clientSessionTerminatedAbruptly)
@@ -801,7 +812,7 @@ namespace ACE.Server.WorldObjects
 
             // calculate stamina cost for this jump
             var extent = Math.Clamp(jump.Extent, 0.0f, 1.0f);
-            var staminaCost = MovementSystem.JumpStaminaCost(extent, burden, false);
+            var staminaCost = MovementSystem.JumpStaminaCost(extent, burden, PKTimerActive);
 
             //Console.WriteLine($"Strength: {strength}, Capacity: {capacity}, Encumbrance: {EncumbranceVal ?? 0}, Burden: {burden}, StaminaCost: {staminaCost}");
 
@@ -882,107 +893,6 @@ namespace ACE.Server.WorldObjects
             //Console.WriteLine($"Burden mod: {burdenMod}");
 
             return burdenMod;
-        }
-
-        /// <summary>
-        /// Method used to perform the animation, sound, and vital update on consumption of food or potions
-        /// </summary>
-        /// <param name="consumableName">Name of the consumable</param>
-        /// <param name="sound">Either Sound.Eat1 or Sound.Drink1</param>
-        /// <param name="buffType">ConsumableBuffType.Spell,ConsumableBuffType.Health,ConsumableBuffType.Stamina,ConsumableBuffType.Mana</param>
-        /// <param name="boostAmount">Amount the Vital is boosted by; can be null, if buffType = ConsumableBuffType.Spell</param>
-        /// <param name="spellDID">Id of the spell cast by the consumable; can be null, if buffType != ConsumableBuffType.Spell</param>
-        public void ApplyConsumable(string consumableName, Sound sound, ConsumableBuffType buffType, uint? boostAmount, uint? spellDID)
-        {
-            IsBusy = true;
-
-            MotionCommand motionCommand;
-
-            if (sound == Sound.Eat1)
-                motionCommand = MotionCommand.Eat;
-            else
-                motionCommand = MotionCommand.Drink;
-
-            // start the eat/drink motion
-            var motion = new Motion(MotionStance.NonCombat, motionCommand);
-            EnqueueBroadcastMotion(motion);
-
-            var motionTable = DatManager.PortalDat.ReadFromDat<MotionTable>(MotionTableId);
-            var animTime = motionTable.GetAnimationLength(CurrentMotionState.Stance, motionCommand, MotionCommand.Ready);
-
-            var actionChain = new ActionChain();
-            actionChain.AddDelaySeconds(animTime);
-
-            actionChain.AddAction(this, () =>
-            {
-                GameMessageSystemChat buffMessage;
-
-                if (buffType == ConsumableBuffType.Spell)
-                {
-                    bool result = false;
-
-                    uint spellId = spellDID ?? 0;
-
-                    if (spellId != 0)
-                        result = CreateSingleSpell(spellId);
-
-                    if (result)
-                    {
-                        var spell = new Server.Entity.Spell(spellId);
-                        buffMessage = new GameMessageSystemChat($"{consumableName} casts {spell.Name} on you.", ChatMessageType.Magic);
-                    }
-                    else
-                        buffMessage = new GameMessageSystemChat($"Consuming {consumableName} attempted to apply a spell not yet fully implemented.", ChatMessageType.System);
-                }
-                else
-                {
-                    CreatureVital creatureVital;
-                    string vitalName;
-
-                    // Null check for safety
-                    if (boostAmount == null)
-                        boostAmount = 0;
-
-                    switch (buffType)
-                    {
-                        case ConsumableBuffType.Health:
-                            creatureVital = Health;
-                            vitalName = "Health";
-                            break;
-                        case ConsumableBuffType.Mana:
-                            creatureVital = Mana;
-                            vitalName = "Mana";
-                            break;
-                        default:
-                            creatureVital = Stamina;
-                            vitalName = "Stamina";
-                            break;
-                    }
-
-                    var vitalChange = UpdateVitalDelta(creatureVital, (uint)boostAmount);
-                    if (vitalName == "Health")
-                    {
-                        DamageHistory.OnHeal((uint)vitalChange);
-                        //if (Fellowship != null)
-                            //Fellowship.OnVitalUpdate(this);
-                    }
-
-                    buffMessage = new GameMessageSystemChat($"You regain {vitalChange} {vitalName}.", ChatMessageType.Craft);
-                }
-
-                var soundEvent = new GameMessageSound(Guid, sound, 1.0f);
-                EnqueueBroadcast(soundEvent);
-
-                Session.Network.EnqueueSend(buffMessage);
-
-                // return to original stance
-                var returnStance = new Motion(CurrentMotionState.Stance);
-                EnqueueBroadcastMotion(returnStance);
-
-                IsBusy = false;
-            });
-
-           actionChain.EnqueueChain();
         }
 
         public bool Adminvision;
