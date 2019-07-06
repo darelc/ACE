@@ -1130,12 +1130,12 @@ namespace ACE.Server.Command.Handlers
                         {
                             if (item.WeenieClassId == 0)
                             {
-                                msg += $"{((DestinationType)item.DestinationType).ToString()}: {item.Shade,6:P2} - {item.WeenieClassId,5} - Nothing\n";
+                                msg += $"{((DestinationType)item.DestinationType).ToString()}: {item.Shade,7:P2} - {item.WeenieClassId,5} - Nothing\n";
                                 continue;
                             }
 
                             var weenie = DatabaseManager.World.GetCachedWeenie(item.WeenieClassId);
-                            msg += $"{((DestinationType)item.DestinationType).ToString()}: {item.Shade,6:P2} - {item.WeenieClassId,5} - {weenie.ClassName} - {weenie.GetProperty(PropertyString.Name)}\n";
+                            msg += $"{((DestinationType)item.DestinationType).ToString()}: {item.Shade,7:P2} - {item.WeenieClassId,5} - {weenie.ClassName} - {weenie.GetProperty(PropertyString.Name)}\n";
                         }
                     }
                     else
@@ -1151,6 +1151,9 @@ namespace ACE.Server.Command.Handlers
                     else
                         msg += "Creature has no wielded items to drop.\n";
                 }
+                else
+                    msg = $"{wo.Name} (0x{wo.Guid}) has no trophies.";
+
                 session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.System));
             }
         }
@@ -1184,13 +1187,30 @@ namespace ACE.Server.Command.Handlers
 
         // add <spell>
         [CommandHandler("addspell", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1, "Adds the specified spell to your own spellbook.", "<spellid>")]
-        public static void HandleAdd(Session session, params string[] parameters)
+        public static void HandleAddSpell(Session session, params string[] parameters)
         {
             if (Enum.TryParse(parameters[0], true, out SpellId spellId))
             {
                 if (Enum.IsDefined(typeof(SpellId), spellId))
                     session.Player.LearnSpellWithNetworking((uint)spellId);
             }
+        }
+
+        [CommandHandler("removespell", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1, "Removes the specified spell to your own spellbook.", "<spellid>")]
+        public static void HandleRemoveSpell(Session session, params string[] parameters)
+        {
+            if (!Enum.TryParse(parameters[0], true, out SpellId spellId))
+            {
+                session.Network.EnqueueSend(new GameMessageSystemChat($"Unknown spell {parameters[0]}", ChatMessageType.Broadcast));
+                return;
+            }
+            if (session.Player.RemoveKnownSpell((uint)spellId))
+            {
+                var spell = new Entity.Spell(spellId, false);
+                session.Network.EnqueueSend(new GameMessageSystemChat($"{spell.Name} removed from spellbook.", ChatMessageType.Broadcast));
+            }
+            else
+                session.Network.EnqueueSend(new GameMessageSystemChat($"You don't know that spell!", ChatMessageType.Broadcast));
         }
 
         // adminhouse
@@ -1758,9 +1778,9 @@ namespace ACE.Server.Command.Handlers
 
             var guid = GuidManager.NewPlayerGuid();
 
-            weenie.Type = (int)session.Player.WeenieType;
-
             var player = new Player(weenie, guid, session.AccountId);
+
+            player.Biota.WeenieType = (int)session.Player.WeenieType;
 
             var name = string.Join(' ', parameters.Skip(1));
             if (parameters.Length > 1)
@@ -1884,7 +1904,7 @@ namespace ACE.Server.Command.Handlers
                     var quests = "";
                     foreach (var quest in player.QuestManager.Quests)
                     {
-                        quests += $"Quest Name: {quest.QuestName}\nComletions: {quest.NumTimesCompleted} | Last Completion: {quest.LastTimeCompleted} ({Common.Time.GetDateTimeFromTimestamp(quest.LastTimeCompleted).ToLocalTime()})\n";
+                        quests += $"Quest Name: {quest.QuestName}\nCompletions: {quest.NumTimesCompleted} | Last Completion: {quest.LastTimeCompleted} ({Common.Time.GetDateTimeFromTimestamp(quest.LastTimeCompleted).ToLocalTime()})\n";
                         var nextSolve = player.QuestManager.GetNextSolveTime(quest.QuestName);
 
                         if (nextSolve == TimeSpan.MinValue)
