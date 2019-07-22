@@ -96,6 +96,9 @@ namespace ACE.Server.WorldObjects
                 CheckForLevelup();
             }
 
+            if (xpType == XpType.Quest)
+                Session.Network.EnqueueSend(new GameMessageSystemChat($"You've earned {amount:N0} experience.", ChatMessageType.Broadcast));
+
             if (HasVitae && xpType != XpType.Allegiance)
                 UpdateXpVitae(amount);
         }
@@ -355,9 +358,6 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public void GrantLevelProportionalXp(double percent, ulong max, bool shareable = false)
         {
-            var maxLevel = GetMaxLevel();
-            if (Level >= maxLevel) return;
-
             var nextLevelXP = GetXPBetweenLevels(Level.Value, Level.Value + 1);
             var scaledXP = (long)Math.Min(nextLevelXP * percent, max);
 
@@ -410,13 +410,10 @@ namespace ACE.Server.WorldObjects
                 var actionChain = new ActionChain();
                 actionChain.AddAction(this, () =>
                 {
-                    var msg = newItemLevel != item.ItemMaxLevel ? $"Your {item.Name} is now level {newItemLevel}!" : $"Your {item.Name} has reached the maximum level of {newItemLevel}!";
+                    var msg = $"Your {item.Name} has increased in power to level {newItemLevel}!";
                     Session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.Broadcast));
 
                     EnqueueBroadcast(new GameMessageScript(Guid, ACE.Entity.Enum.PlayScript.AetheriaLevelUp));
-
-                    if (newItemLevel == item.ItemMaxLevel)
-                        EnqueueBroadcast(new GameMessageScript(Guid, ACE.Entity.Enum.PlayScript.WeddingBliss));
 
                     OnItemLevelUp(item, prevItemLevel);
 

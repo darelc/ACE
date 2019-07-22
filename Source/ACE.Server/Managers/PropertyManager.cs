@@ -444,6 +444,7 @@ namespace ACE.Server.Managers
                 ("fellow_kt_killer", true),         // if FALSE, fellowship kill tasks will share with the fellowship, even if the killer doesn't have the quest
                 ("fellow_kt_landblock", false),     // if TRUE, fellowship kill tasks will share with landblock range (192 distance radius, or entire dungeon)
                 ("fellow_quest_bonus", false),      // if TRUE, applies EvenShare formula to fellowship quest reward XP (300% max bonus, defaults to false in retail)
+                ("house_per_char", false),          // if TRUE, allows 1 house per char instead of 1 house per account
                 ("iou_trades", false),              // (non-retail function) If enabled, IOUs can be traded for objects that are missing in DB but added/restored later on.
                 ("chess_enabled", true),
                 ("corpse_decay_tick_logging", false),   // log decaying player corpse ticks.
@@ -458,6 +459,7 @@ namespace ACE.Server.Managers
                 ("quest_info_enabled", false),      // toggles the /myquests player command
                 ("salvage_handle_overages", false), // in retail, if 2 salvage bags were combined beyond 100 structure, the overages would be lost
                 ("show_dot_messages", false),       // if enabled, shows combat messages for DoT damage ticks. defaults to disabled, as in retail
+                ("suicide_instant_death", false),   // if enabled, @die command kills player instantly. defaults to disabled, as in retail
                 ("use_wield_requirements", true),   // disable this to bypass wield requirements. mostly for dev debugging
                 ("world_closed", false)             // enable this to startup world as a closed to players world.
                 );
@@ -473,6 +475,11 @@ namespace ACE.Server.Managers
 
         public static readonly ReadOnlyDictionary<string, double> DefaultDoubleProperties =
             DictOf(
+                ("minor_cantrip_drop_rate", 1.0),
+                ("major_cantrip_drop_rate", 1.0),
+                ("epic_cantrip_drop_rate", 1.0),
+                ("legendary_cantrip_drop_rate", 1.0),
+                ("aetheria_drop_rate", 1.0),
                 ("chess_ai_start_time", -1.0),      // the number of seconds for the chess ai to start. defaults to -1 (disabled)
                 ("encounter_delay", 1800),          // the number of seconds a generator profile for regions is delayed from returning to free slots
                 ("encounter_regen_interval", 600),  // the number of seconds a generator for regions at which spawns its next set of objects.

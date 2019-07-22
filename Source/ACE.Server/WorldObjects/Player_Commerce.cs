@@ -345,11 +345,10 @@ namespace ACE.Server.WorldObjects
                 if (item == null)
                     continue;
 
-                if (!(item.GetProperty(PropertyBool.IsSellable) ?? true) || (item.GetProperty(PropertyBool.Retained) ?? false) || (acceptedItemTypes & item.ItemType) == 0)
+                if ((acceptedItemTypes & item.ItemType) == 0 || !item.IsSellable || item.Retained)
                 {
                     var itemName = (item.StackSize ?? 1) > 1 ? item.GetPluralName() : item.Name;
-                    Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, $"The {itemName} cannot be sold")); // TODO: find retail messages
-                    Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, item.Guid.Full));
+                    Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, $"The {itemName} is unsellable.")); // retail message did not include item name, leaving in that for now.
 
                     continue;
                 }
@@ -359,7 +358,8 @@ namespace ACE.Server.WorldObjects
 
             if (sellList.Count == 0)
             {
-                SendUseDoneEvent(WeenieError.NoObject);
+                Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, Guid.Full));
+                SendUseDoneEvent(WeenieError.None);
                 return;
             }
 
