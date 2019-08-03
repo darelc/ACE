@@ -376,10 +376,10 @@ namespace ACE.Server.WorldObjects
             }
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.DefaultScript) != 0)
-                writer.Write(DefaultScriptId ?? 0);
+                writer.Write(Convert.ToUInt32(PhysicsObj?.DefaultScript ?? 0u));
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.DefaultScriptIntensity) != 0)
-                writer.Write(DefaultScriptIntensity ?? 0f);
+                writer.Write(PhysicsObj?.DefaultScriptIntensity ?? 0f);
 
             // timestamps
             writer.Write(Sequences.GetCurrentSequence(SequenceType.ObjectPosition));        // 0
@@ -478,10 +478,10 @@ namespace ACE.Server.WorldObjects
             if (Omega != null)
                 physicsDescriptionFlag |= PhysicsDescriptionFlag.Omega;
 
-            if (DefaultScriptId != null)
+            if (PhysicsObj?.DefaultScript != null)
                 physicsDescriptionFlag |= PhysicsDescriptionFlag.DefaultScript;
 
-            if (DefaultScriptIntensity != null)
+            if (PhysicsObj?.DefaultScriptIntensity != null)
                 physicsDescriptionFlag |= PhysicsDescriptionFlag.DefaultScriptIntensity;
 
             return physicsDescriptionFlag;
@@ -752,7 +752,7 @@ namespace ACE.Server.WorldObjects
             if ((Workmanship != null) && (uint?)Workmanship != 0u)
                 weenieHeaderFlag |= WeenieHeaderFlag.Workmanship;
 
-            if (EncumbranceVal != 0 && !(this is Creature))
+            if (EncumbranceVal != 0 && !(this is Creature) && !(this is SpellProjectile))
                 weenieHeaderFlag |= WeenieHeaderFlag.Burden;
 
             if ((SpellDID != null) && (SpellDID != 0))
@@ -1137,7 +1137,7 @@ namespace ACE.Server.WorldObjects
         /// Sends network messages to all Players who currently know about this object
         /// within a maximum range
         /// </summary>
-        public void EnqueueBroadcast(GameMessage msg, float range, bool useSquelch = false)
+        public void EnqueueBroadcast(GameMessage msg, float range, ChatMessageType? squelchType = null)
         {
             if (PhysicsObj == null || CurrentLandblock == null) return;
 
@@ -1154,7 +1154,7 @@ namespace ACE.Server.WorldObjects
 
             foreach (var player in PhysicsObj.ObjMaint.KnownPlayers.Values.Select(v => v.WeenieObj.WorldObject).OfType<Player>())
             {
-                if (self != null && useSquelch && player.Squelches.Contains(self))
+                if (self != null && squelchType != null && player.SquelchManager.Squelches.Contains(self, squelchType.Value))
                     continue;
 
                 if (isDungeon && Location.Landblock != player.Location.Landblock)

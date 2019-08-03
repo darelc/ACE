@@ -54,6 +54,11 @@ namespace ACE.Server.WorldObjects
             get => Character.IsPlussed || (ConfigManager.Config.Server.Accounts.OverrideCharacterPermissions && Session.AccessLevel > AccessLevel.Advocate);
         }
 
+        public string GodState
+        {
+            get => GetProperty(PropertyString.GodState);
+            set { if (value == null) RemoveProperty(PropertyString.GodState); else SetProperty(PropertyString.GodState, value); }
+        }
 
         // ========================================
         // ========== Account Properties ==========
@@ -1045,6 +1050,12 @@ namespace ACE.Server.WorldObjects
         {
             get => (AetheriaBitfield)(GetProperty(PropertyInt.AetheriaBitfield) ?? 0);
             set { if (value == 0) RemoveProperty(PropertyInt.AetheriaBitfield); else SetProperty(PropertyInt.AetheriaBitfield, (int)value); }
+        }
+
+        public SquelchMask SquelchGlobal
+        {
+            get => (SquelchMask)(GetProperty(PropertyInt.SquelchGlobal) ?? 0);
+            set { if (value == 0) RemoveProperty(PropertyInt.SquelchGlobal); else SetProperty(PropertyInt.SquelchGlobal, (int)value); }
         }
     }
 }

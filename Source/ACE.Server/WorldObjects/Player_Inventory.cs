@@ -49,7 +49,8 @@ namespace ACE.Server.WorldObjects
 
         public bool HasEnoughBurdenToAddToInventory(WorldObject worldObject)
         {
-            return (EncumbranceVal + worldObject.EncumbranceVal <= (GetEncumbranceCapacity() * 3));
+            // We can still pick up null items, for some reason, we have the conditional for that
+            return (EncumbranceVal + (worldObject.EncumbranceVal ?? 0) <= (GetEncumbranceCapacity() * 3));
         }
 
         public bool HasEnoughBurdenToAddToInventory(int totalEncumbranceToCheck)
@@ -104,6 +105,8 @@ namespace ACE.Server.WorldObjects
 
             if (item.WeenieType == WeenieType.Coin)
                 UpdateCoinValue();
+
+            item.SaveBiotaToDatabase();
 
             return true;
         }
@@ -214,6 +217,45 @@ namespace ACE.Server.WorldObjects
             return true;
         }
 
+        public void TryShuffleStance(EquipMask wieldedLocation)
+        {
+            //Console.WriteLine($"{Name}.TryStanceShuffle({wieldedLocation})");
+
+            // do the appropriate combat stance shuffling, based on the item types
+            // todo: instead of switching the weapon immediately, the weapon should be swpped in the middle of the animation chain
+
+            if (CombatMode != CombatMode.NonCombat && CombatMode != CombatMode.Undef)
+            {
+                switch (wieldedLocation)
+                {
+                    case EquipMask.MissileWeapon:
+
+                        var animTime = SetCombatMode(CombatMode.Missile, out var queueTime);
+
+                        var equippedAmmo = GetEquippedAmmo();
+
+                        if (equippedAmmo == null)
+                        {
+                            Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "You are out of ammunition!"));
+
+                            var actionChain = new ActionChain();
+                            actionChain.AddDelaySeconds(animTime - queueTime);
+                            actionChain.AddAction(this, () => SetCombatMode(CombatMode.NonCombat));
+                            actionChain.EnqueueChain();
+                        }
+                        break;
+
+                    case EquipMask.Held:
+                        SetCombatMode(CombatMode.Magic);
+                        break;
+
+                    default:
+                        SetCombatMode(CombatMode.Melee);
+                        break;
+                }
+            }
+        }
+
         /// <summary>
         /// This will set the CurrentWieldedLocation property to wieldedLocation and the Wielder property to this guid and will add it to the EquippedObjects dictionary.<para />
         /// It will also increase the EncumbranceVal and Value.
@@ -229,24 +271,7 @@ namespace ACE.Server.WorldObjects
                 new GameEventWieldItem(Session, item.Guid.Full, wieldedLocation),
                 new GameMessageSound(Guid, Sound.WieldObject));
 
-            // do the appropriate combat stance shuffling, based on the item types
-            // todo: instead of switching the weapon immediately, the weapon should be swpped in the middle of the animation chain
-
-            if (CombatMode != CombatMode.NonCombat && CombatMode != CombatMode.Undef)
-            {
-                switch (wieldedLocation)
-                {
-                    case EquipMask.MissileWeapon:
-                        SetCombatMode(CombatMode.Missile);
-                        break;
-                    case EquipMask.Held:
-                        SetCombatMode(CombatMode.Magic);
-                        break;
-                    default:
-                        SetCombatMode(CombatMode.Melee);
-                        break;
-                }
-            }
+            TryShuffleStance(wieldedLocation);
 
             // does this item cast enchantments, and currently have mana?
             if (item.ItemCurMana > 1 || item.ItemCurMana == null) // TODO: Once Item Current Mana is fixed for loot generated items, '|| item.ItemCurMana == null' can be removed
@@ -265,6 +290,13 @@ namespace ACE.Server.WorldObjects
                 {
                     if (item.HasProcSpell((uint)spell.Spell))
                         continue;
+
+                    if (spell.Probability == 0.0f)
+                    {
+                        var _spell = new Spell(spell.Spell, false);
+                        log.Warn($"{Name}.TryEquipObjectWithNetworking({item.Name} ({item.Guid}, wcid {item.WeenieClassId})) - spellbook contains {_spell.Name} probability 0, ignoring");
+                        continue;
+                    }
 
                     var enchantmentStatus = CreateItemSpell(item, (uint)spell.Spell);
                     if (enchantmentStatus.Success)
@@ -623,6 +655,8 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public void HandleActionPutItemInContainer(uint itemGuid, uint containerGuid, int placement = 0)
         {
+            //Console.WriteLine($"{Name}.HandleActionPutItemInContainer({itemGuid:X8}, {containerGuid:X8}, {placement})");
+
             if (IsBusy)
             {
                 Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.YoureTooBusy));
@@ -910,7 +944,9 @@ namespace ACE.Server.WorldObjects
                 }
             }
 
-            if (!container.TryAddToInventory(item, placement, true))
+            var burdenCheck = itemRootOwner != this && containerRootOwner == this;
+
+            if (!container.TryAddToInventory(item, placement, true, burdenCheck))
             {
                 Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "AddToInventory failed!")); // Custom error message
                 Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, item.Guid.Full));
@@ -1279,10 +1315,14 @@ namespace ACE.Server.WorldObjects
 
                     // handle swapping dual-wielded weapons
                     if (IsDoubleSend)
-                        HandleActionGetAndWieldItem(Prev_PutItemInContainer.ItemGuid, (EquipMask)prevLocation);
+                        HandleActionGetAndWieldItem(Prev_PutItemInContainer[0].ItemGuid, (EquipMask)prevLocation);
                     else
                         Session.Network.EnqueueSend(new GameMessageSound(Guid, Sound.WieldObject));
                 }
+
+                // perform stance swapping if necessary
+                TryShuffleStance(wieldedLocation);
+
                 return true;
             }
 
@@ -2133,8 +2173,8 @@ namespace ACE.Server.WorldObjects
 
                 var stackSize = itemToGive.StackSize ?? 1;
 
-                var stackMsg = stackSize > 1 ? $"{stackSize} " : "";
-                var itemName = stackSize > 1 ? itemToGive.GetPluralName() : itemToGive.Name;
+                var stackMsg = stackSize != 1 ? $"{stackSize} " : "";
+                var itemName = itemToGive.GetNameWithMaterial(stackSize);
 
                 Session.Network.EnqueueSend(new GameMessageSystemChat($"You give {target.Name} {stackMsg}{itemName}.", ChatMessageType.Broadcast));
                 Session.Network.EnqueueSend(new GameMessageSound(Guid, Sound.ReceiveItem));
@@ -2190,7 +2230,7 @@ namespace ACE.Server.WorldObjects
                         if (itemToGive == null)
                             Session.Network.EnqueueSend(new GameEventItemServerSaysContainId(Session, item, target));
 
-                        Session.Network.EnqueueSend(new GameMessageSystemChat($"You give {target.Name} {item.Name}.", ChatMessageType.Broadcast));
+                        Session.Network.EnqueueSend(new GameMessageSystemChat($"You give {target.Name} {item.NameWithMaterial}.", ChatMessageType.Broadcast));
                         Session.Network.EnqueueSend(new GameMessageSound(Guid, Sound.ReceiveItem));
                     }
                     else
@@ -2201,8 +2241,9 @@ namespace ACE.Server.WorldObjects
 
                             var stackSize = item.StackSize ?? 1;
 
-                            var stackMsg = stackSize > 1 ? $"{stackSize} " : "";
-                            var itemName = stackSize > 1 ? item.GetPluralName() : item.Name;
+                            var stackMsg = stackSize != 1 ? $"{stackSize} " : "";
+                            var itemName = item.GetNameWithMaterial(stackSize);
+
                             Session.Network.EnqueueSend(new GameMessageSystemChat($"You give {target.Name} {stackMsg}{itemName}.", ChatMessageType.Broadcast));
                             Session.Network.EnqueueSend(new GameMessageSound(Guid, Sound.ReceiveItem));
                         }
@@ -2215,7 +2256,7 @@ namespace ACE.Server.WorldObjects
                 else if (result.Category == (uint)EmoteCategory.Refuse)
                 {
                     // Item rejected by npc
-                    Session.Network.EnqueueSend(new GameMessageSystemChat($"You allow {target.Name} to examine your {item.Name}.", ChatMessageType.Broadcast));
+                    Session.Network.EnqueueSend(new GameMessageSystemChat($"You allow {target.Name} to examine your {item.NameWithMaterial}.", ChatMessageType.Broadcast));
                     Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, item.Guid.Full, WeenieError.TradeAiRefuseEmote));
                 }
             }
@@ -2228,7 +2269,7 @@ namespace ACE.Server.WorldObjects
 
         private void HandleIOUTurnIn(WorldObject target, WorldObject iouToTurnIn)
         {
-            Session.Network.EnqueueSend(new GameMessageSystemChat($"You allow {target.Name} to examine your {iouToTurnIn.Name}.", ChatMessageType.Broadcast));
+            Session.Network.EnqueueSend(new GameMessageSystemChat($"You allow {target.Name} to examine your {iouToTurnIn.NameWithMaterial}.", ChatMessageType.Broadcast));
             Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, iouToTurnIn.Guid.Full, WeenieError.TradeAiRefuseEmote));
 
             if (iouToTurnIn is Book book)
@@ -2421,17 +2462,26 @@ namespace ACE.Server.WorldObjects
         // The client will double-send 0x19 PutItemInContainer for the same object
         // (swapping dual wield weapons, swapping ammo types in combat)
 
-        private PutItemInContainerEvent Prev_PutItemInContainer;
-        private bool IsDoubleSend;
+        private PutItemInContainerEvent[] Prev_PutItemInContainer = new PutItemInContainerEvent[2];
+        private bool IsDoubleSend
+        {
+            get
+            {
+                if (Prev_PutItemInContainer[0] == null || Prev_PutItemInContainer[1] == null)
+                    return false;
+
+                var isDoubleSend = Prev_PutItemInContainer[0].IsDoubleSend(Prev_PutItemInContainer[1]);
+
+                Prev_PutItemInContainer[1] = null;
+
+                return isDoubleSend;
+            }
+        }
 
         private void OnPutItemInContainer(uint itemGuid, uint containerGuid, int placement)
         {
-            var putItemInContainer = new PutItemInContainerEvent(itemGuid, containerGuid, placement);
-
-            if (Prev_PutItemInContainer != null)
-                IsDoubleSend = putItemInContainer.IsDoubleSend(Prev_PutItemInContainer);
-
-            Prev_PutItemInContainer = putItemInContainer;
+            Prev_PutItemInContainer[1] = Prev_PutItemInContainer[0];
+            Prev_PutItemInContainer[0] = new PutItemInContainerEvent(itemGuid, containerGuid, placement);
         }
     }
 }

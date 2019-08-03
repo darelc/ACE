@@ -9,7 +9,7 @@ namespace ACE.Server.WorldObjects
 {
     partial class WorldObject
     {
-        public AttackType MAttackType
+        public AttackType W_AttackType
         {
             get => (AttackType)(GetProperty(PropertyInt.AttackType) ?? 0);
             set { if (value == 0) RemoveProperty(PropertyInt.AttackType); else SetProperty(PropertyInt.AttackType, (int)value); }
@@ -717,6 +717,140 @@ namespace ACE.Server.WorldObjects
                 return;
             }
             wielder.TryCastSpell(spell, target, this);
+        }
+
+        private bool? isMasterable;
+
+        public bool IsMasterable
+        {
+            get
+            {
+                // should be based on this, but a bunch of the weapon data probably needs to be updated...
+                //return W_WeaponType != WeaponType.Undef;
+
+                // cache this?
+                if (isMasterable == null)
+                    isMasterable = LongDesc == null || !LongDesc.Contains("This weapon seems tough to master.", StringComparison.OrdinalIgnoreCase);
+
+                return isMasterable.Value;
+            }
+        }
+
+        private static readonly float ThrustThreshold = 0.25f;
+
+        public AttackType GetAttackType(MotionStance stance, float powerLevel, bool offhand)
+        {
+            if (offhand)
+                return GetOffhandAttackType(stance, powerLevel);
+
+            var attackType = W_AttackType;
+
+            if (stance == MotionStance.DualWieldCombat)
+            {
+                if (attackType.HasFlag(AttackType.TripleThrust | AttackType.TripleSlash))
+                {
+                    if (powerLevel >= ThrustThreshold)
+                        attackType = AttackType.TripleSlash;
+                    else
+                        attackType = AttackType.TripleThrust;
+                }
+                else if (attackType.HasFlag(AttackType.DoubleThrust | AttackType.DoubleSlash))
+                {
+                    if (powerLevel >= ThrustThreshold)
+                        attackType = AttackType.DoubleSlash;
+                    else
+                        attackType = AttackType.DoubleThrust;
+                }
+            }
+            else if (stance == MotionStance.SwordShieldCombat)
+            {
+                // force thrust animation when using a shield with a multi-strike weapon
+                if (attackType.HasFlag(AttackType.TripleThrust | AttackType.TripleSlash))
+                {
+                    if (powerLevel >= ThrustThreshold)
+                        attackType = AttackType.TripleThrust;
+                    else
+                        attackType = AttackType.Thrust;
+                }
+                else if (attackType.HasFlag(AttackType.DoubleThrust | AttackType.DoubleSlash))
+                {
+                    if (powerLevel >= ThrustThreshold)
+                        attackType = AttackType.DoubleThrust;
+                    else
+                        attackType = AttackType.Thrust;
+                }
+            }
+            else if (stance == MotionStance.SwordCombat)
+            {
+                // force slash animation when using no shield with a multi-strike weapon
+                if (attackType.HasFlag(AttackType.TripleThrust | AttackType.TripleSlash))
+                {
+                    if (powerLevel >= ThrustThreshold)
+                        attackType = AttackType.TripleSlash;
+                    else
+                        attackType = AttackType.Thrust;
+                }
+                else if (attackType.HasFlag(AttackType.DoubleThrust | AttackType.DoubleSlash))
+                {
+                    if (powerLevel >= ThrustThreshold)
+                        attackType = AttackType.DoubleSlash;
+                    else
+                        attackType = AttackType.Thrust;
+                }
+            }
+            if (attackType.HasFlag(AttackType.Thrust | AttackType.Slash))
+            {
+                if (powerLevel >= ThrustThreshold)
+                    attackType = AttackType.Slash;
+                else
+                    attackType = AttackType.Thrust;
+            }
+            return attackType;
+        }
+
+        public AttackType GetOffhandAttackType(MotionStance stance, float powerLevel)
+        {
+            var attackType = W_AttackType;
+
+            if (attackType.HasFlag(AttackType.TripleThrust | AttackType.TripleSlash))
+            {
+                if (powerLevel >= ThrustThreshold)
+                    attackType = AttackType.OffhandTripleSlash;
+                else
+                    attackType = AttackType.OffhandTripleThrust;
+            }
+            else if (attackType.HasFlag(AttackType.DoubleThrust | AttackType.DoubleSlash))
+            {
+                if (powerLevel >= ThrustThreshold)
+                    attackType = AttackType.OffhandDoubleSlash;
+                else
+                    attackType = AttackType.OffhandDoubleThrust;
+            }
+            else if (attackType.HasFlag(AttackType.Thrust | AttackType.Slash))
+            {
+                if (powerLevel >= ThrustThreshold)
+                    attackType = AttackType.OffhandSlash;
+                else
+                    attackType = AttackType.OffhandThrust;
+            }
+            else
+            {
+                switch (attackType)
+                {
+                    case AttackType.Thrust:
+                        attackType = AttackType.OffhandThrust;
+                        break;
+
+                    case AttackType.Slash:
+                        attackType = AttackType.OffhandSlash;
+                        break;
+
+                    case AttackType.Punch:
+                        attackType = AttackType.OffhandPunch;
+                        break;
+                }
+            }
+            return attackType;
         }
     }
 }

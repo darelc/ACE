@@ -1,7 +1,6 @@
-using System;
-
 using ACE.Entity.Enum;
 using ACE.Server.Entity;
+using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.Physics;
 
@@ -68,7 +67,7 @@ namespace ACE.Server.WorldObjects
                         // monster damage player
                         if (damageEvent.HasDamage)
                         {
-                            targetPlayer.TakeDamage(sourceCreature, damageEvent.DamageType, damageEvent.Damage, damageEvent.BodyPart, damageEvent.IsCritical);
+                            targetPlayer.TakeDamage(sourceCreature, damageEvent);
 
                             // blood splatter?
 
@@ -79,12 +78,7 @@ namespace ACE.Server.WorldObjects
                             }
                         }
                         else
-                        {
-                            if (!targetPlayer.UnderLifestoneProtection)
-                                targetPlayer.Session.Network.EnqueueSend(new GameMessageSystemChat($"You evaded {sourceCreature.Name}!", ChatMessageType.CombatEnemy));
-
-                            Proficiency.OnSuccessUse(targetPlayer, targetPlayer.GetCreatureSkill(Skill.MissileDefense), sourceCreature.GetCreatureSkill(sourceCreature.GetCurrentAttackSkill()).Current);
-                        }
+                            targetPlayer.OnEvade(sourceCreature, CombatType.Missile);
                     }
                     else
                     {

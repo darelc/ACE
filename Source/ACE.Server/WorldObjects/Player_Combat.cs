@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using ACE.Common;
 using ACE.DatLoader.Entity;
 using ACE.Entity;
@@ -140,30 +139,29 @@ namespace ACE.Server.WorldObjects
                 OnDamageTarget(target, damageEvent.CombatType, damageEvent.IsCritical);
 
                 if (targetPlayer != null)
-                    targetPlayer.TakeDamage(this, damageEvent.DamageType, damageEvent.Damage, damageEvent.BodyPart, damageEvent.IsCritical);
+                    targetPlayer.TakeDamage(this, damageEvent);
                 else
                     target.TakeDamage(this, damageEvent.DamageType, damageEvent.Damage, damageEvent.IsCritical);
             }
             else
             {
-                if (targetPlayer != null && targetPlayer.UnderLifestoneProtection)
+                if (damageEvent.LifestoneProtection)
                     Session.Network.EnqueueSend(new GameMessageSystemChat($"The Lifestone's magic protects {target.Name} from the attack!", ChatMessageType.Magic));
-                else
-                    Session.Network.EnqueueSend(new GameMessageSystemChat($"{target.Name} evaded your attack.", ChatMessageType.CombatSelf));
+
+                else if (!SquelchManager.Squelches.Contains(target, ChatMessageType.CombatSelf))
+                    Session.Network.EnqueueSend(new GameEventEvasionAttackerNotification(Session, target.Name));
+
+                if (targetPlayer != null)
+                    targetPlayer.OnEvade(this, damageEvent.CombatType);
             }
 
             if (damageEvent.HasDamage && target.IsAlive)
             {
-                var attackConditions = new AttackConditions();
-                if (damageEvent.RecklessnessMod > 1.0f)
-                    attackConditions |= AttackConditions.Recklessness;
-                if (damageEvent.SneakAttackMod > 1.0f)
-                    attackConditions |= AttackConditions.SneakAttack;
-
                 // notify attacker
                 var intDamage = (uint)Math.Round(damageEvent.Damage);
 
-                Session.Network.EnqueueSend(new GameEventAttackerNotification(Session, target.Name, damageEvent.DamageType, (float)intDamage / target.Health.MaxValue, intDamage, damageEvent.IsCritical, attackConditions));
+                if (!SquelchManager.Squelches.Contains(this, ChatMessageType.CombatSelf))
+                    Session.Network.EnqueueSend(new GameEventAttackerNotification(Session, target.Name, damageEvent.DamageType, (float)intDamage / target.Health.MaxValue, intDamage, damageEvent.IsCritical, damageEvent.AttackConditions));
 
                 // splatter effects
                 if (targetPlayer == null)
@@ -278,7 +276,8 @@ namespace ACE.Server.WorldObjects
             else
                 UpdateVitalDelta(Stamina, -1);
 
-            Session.Network.EnqueueSend(new GameMessageSystemChat($"You evaded {attacker.Name}!", ChatMessageType.CombatEnemy));
+            if (!SquelchManager.Squelches.Contains(attacker, ChatMessageType.CombatEnemy))
+                Session.Network.EnqueueSend(new GameEventEvasionDefenderNotification(Session, attacker.Name));
 
             var creature = attacker as Creature;
             if (creature == null) return;
@@ -409,8 +408,8 @@ namespace ACE.Server.WorldObjects
             //{
                 var nether = damageType == DamageType.Nether ? "nether " : "";
                 var chatMessageType = damageType == DamageType.Nether ? ChatMessageType.Magic : ChatMessageType.Combat;
-                var text = new GameMessageSystemChat($"You receive {amount} points of periodic {nether}damage.", chatMessageType);
-                Session.Network.EnqueueSend(text);
+                var text = $"You receive {amount} points of periodic {nether}damage.";
+                SendMessage(text, chatMessageType);
             //}
 
             // splatter effects
@@ -434,10 +433,15 @@ namespace ACE.Server.WorldObjects
                 EnqueueBroadcast(new GameMessageSound(Guid, Sound.Wound1, 1.0f));
         }
 
+        public int TakeDamage(WorldObject source, DamageEvent damageEvent)
+        {
+            return TakeDamage(source, damageEvent.DamageType, damageEvent.Damage, damageEvent.BodyPart, damageEvent.IsCritical, damageEvent.AttackConditions);
+        }
+
         /// <summary>
         /// Applies damages to a player from a physical damage source
         /// </summary>
-        public int TakeDamage(WorldObject source, DamageType damageType, float _amount, BodyPart bodyPart, bool crit = false)
+        public int TakeDamage(WorldObject source, DamageType damageType, float _amount, BodyPart bodyPart, bool crit = false, AttackConditions attackConditions = AttackConditions.None)
         {
             if (Invincible || IsDead) return 0;
 
@@ -478,8 +482,8 @@ namespace ACE.Server.WorldObjects
             // send network messages
             if (source is Creature creature)
             {
-                var text = new GameEventDefenderNotification(Session, creature.Name, damageType, percent, amount, damageLocation, crit, AttackConditions.None);
-                Session.Network.EnqueueSend(text);
+                if (!SquelchManager.Squelches.Contains(source, ChatMessageType.CombatEnemy))
+                    Session.Network.EnqueueSend(new GameEventDefenderNotification(Session, creature.Name, damageType, percent, amount, damageLocation, crit, attackConditions));
 
                 var hitSound = new GameMessageSound(Guid, GetHitSound(source, bodyPart), 1.0f);
                 var splatter = new GameMessageScript(Guid, (PlayScript)Enum.Parse(typeof(PlayScript), "Splatter" + creature.GetSplatterHeight() + creature.GetSplatterDir(this)));
@@ -620,17 +624,27 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Returns TRUE if this player is PK and died to another player
         /// </summary>
-        public bool IsPKDeath()
+        public bool IsPKDeath(WorldObject topDamager)
         {
-            return PlayerKillerStatus.HasFlag(PlayerKillerStatus.PK) && new ObjectGuid(KillerId ?? 0).IsPlayer();
+            return IsPKDeath(topDamager?.Guid.Full);
+        }
+
+        public bool IsPKDeath(uint? killerGuid)
+        {
+            return PlayerKillerStatus.HasFlag(PlayerKillerStatus.PK) && new ObjectGuid(killerGuid ?? 0).IsPlayer();
         }
 
         /// <summary>
         /// Returns TRUE if this player is PKLite and died to another player
         /// </summary>
-        public bool IsPKLiteDeath()
+        public bool IsPKLiteDeath(WorldObject topDamager)
         {
-            return PlayerKillerStatus.HasFlag(PlayerKillerStatus.PKLite) && new ObjectGuid(KillerId ?? 0).IsPlayer();
+            return IsPKLiteDeath(topDamager?.Guid.Full);
+        }
+
+        public bool IsPKLiteDeath(uint? killerGuid)
+        {
+            return PlayerKillerStatus.HasFlag(PlayerKillerStatus.PKLite) && new ObjectGuid(killerGuid ?? 0).IsPlayer();
         }
 
         /// <summary>
