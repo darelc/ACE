@@ -8,6 +8,7 @@ using log4net;
 
 using ACE.Common;
 using ACE.Common.Extensions;
+using ACE.Database;
 using ACE.Database.Models.Shard;
 using ACE.Database.Models.World;
 using ACE.Entity;
@@ -24,6 +25,7 @@ using ACE.Server.Physics;
 using ACE.Server.Physics.Animation;
 using ACE.Server.Physics.Common;
 using ACE.Server.Physics.Util;
+using ACE.Server.WorldObjects.Managers;
 
 using Landblock = ACE.Server.Entity.Landblock;
 using Position = ACE.Entity.Position;
@@ -81,6 +83,8 @@ namespace ACE.Server.WorldObjects
         public WorldObject ProjectileSource;
         public WorldObject ProjectileTarget;
 
+        public WorldObject ProjectileLauncher;
+
         public WorldObject Wielder;
 
         public WorldObject() { }
@@ -134,7 +138,18 @@ namespace ACE.Server.WorldObjects
             if (!(this is Creature))
             {
                 var isDynamic = Static == null || !Static.Value;
-                PhysicsObj = PhysicsObj.makeObject(SetupTableId, Guid.Full, isDynamic);
+                var setupTableId = SetupTableId;
+
+                // TODO: REMOVE ME?
+                // Temporary workaround fix to account for ace spawn placement issues with certain hooked objects.
+                if (this is Hook)
+                {
+                    var hookWeenie = DatabaseManager.World.GetCachedWeenie(WeenieClassId);
+                    setupTableId = hookWeenie.GetProperty(PropertyDataId.Setup) ?? SetupTableId;
+                }
+                // TODO: REMOVE ME?
+
+                PhysicsObj = PhysicsObj.makeObject(setupTableId, Guid.Full, isDynamic);
             }
             else
             {
@@ -198,13 +213,18 @@ namespace ACE.Server.WorldObjects
             }
 
             //Console.WriteLine($"AddPhysicsObj: success: {Name} ({Guid})");
-            Location.LandblockId = new LandblockId(PhysicsObj.Position.ObjCellID);
-            Location.Pos = PhysicsObj.Position.Frame.Origin;
-            Location.Rotation = PhysicsObj.Position.Frame.Orientation;
+            SyncLocation();
 
             SetPosition(PositionType.Home, new Position(Location));
 
             return true;
+        }
+
+        public void SyncLocation()
+        {
+            Location.LandblockId = new LandblockId(PhysicsObj.Position.ObjCellID);
+            Location.Pos = PhysicsObj.Position.Frame.Origin;
+            Location.Rotation = PhysicsObj.Position.Frame.Orientation;
         }
 
         private void InitializePropertyDictionaries()
@@ -821,59 +841,16 @@ namespace ACE.Server.WorldObjects
         /// Returns the modified damage for a weapon,
         /// with the wielder enchantments taken into account
         /// </summary>
-        public BaseDamageMod GetDamageMod(Creature wielder)
+        public BaseDamageMod GetDamageMod(Creature wielder, WorldObject weapon = null)
         {
             var baseDamage = GetBaseDamage();
-            var weapon = wielder.GetEquippedWeapon();
+
+            if (weapon == null)
+                weapon = wielder.GetEquippedWeapon();
 
             var baseDamageMod = new BaseDamageMod(baseDamage, wielder, weapon);
 
             return baseDamageMod;
-        }
-
-        /// <summary>
-        /// Returns the damage type for the currently equipped weapon / ammo
-        /// </summary>
-        /// <param name="multiple">If true, returns all of the damage types for the weapon</param>
-        public virtual DamageType GetDamageType(bool multiple = false)
-        {
-            var creature = this as Creature;
-            if (creature == null)
-            {
-                Console.WriteLine("WorldObject.GetDamageType(): null creature");
-                return DamageType.Undef;
-            }
-
-            var weapon = creature.GetEquippedWeapon();
-            var ammo = creature.GetEquippedAmmo();
-
-            if (weapon == null)
-                return DamageType.Bludgeon;
-
-            DamageType damageTypes;
-            var attackType = creature.GetCombatType();
-            if (attackType == CombatType.Melee || ammo == null || !weapon.IsAmmoLauncher)
-                damageTypes = (DamageType)(weapon.GetProperty(PropertyInt.DamageType) ?? 0);
-            else
-                damageTypes = (DamageType)(ammo.GetProperty(PropertyInt.DamageType) ?? 0);
-
-            // returning multiple damage types
-            if (multiple) return damageTypes;
-
-            // get single damage type
-            var motion = creature.CurrentMotionState.MotionState.ForwardCommand.ToString();
-            foreach (DamageType damageType in Enum.GetValues(typeof(DamageType)))
-            {
-                if ((damageTypes & damageType) != 0)
-                {
-                    // handle multiple damage types
-                    if (damageType == DamageType.Slash && motion.Contains("Thrust"))
-                        continue;
-
-                    return damageType;
-                }
-            }
-            return damageTypes;
         }
 
         public bool IsDestroyed { get; private set; }
@@ -891,6 +868,8 @@ namespace ACE.Server.WorldObjects
             }
 
             IsDestroyed = true;
+
+            ReleasedTimestamp = Time.GetUnixTime();
 
             if (this is Container container)
             {
@@ -914,6 +893,7 @@ namespace ACE.Server.WorldObjects
                 NotifyOfEvent(RegenerationType.Destruction);
 
             CurrentLandblock?.RemoveWorldObject(Guid);
+
             RemoveBiotaFromDatabase();
 
             if (Guid.IsDynamic())
@@ -1005,7 +985,7 @@ namespace ACE.Server.WorldObjects
 
         public static readonly float LocalBroadcastRange = 96.0f;
 
-        public SetPosition ScatterPos;
+        public SetPosition ScatterPos { get; set; }
 
         public DestinationType DestinationType;
 

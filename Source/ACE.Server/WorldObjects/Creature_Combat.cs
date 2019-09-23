@@ -393,10 +393,12 @@ namespace ACE.Server.WorldObjects
         /// <param name="attackType">Uses strength for melee, coordination for missile</param>
         public float GetAttributeMod(WorldObject weapon)
         {
-            if (weapon != null && weapon.IsBow)
-                return SkillFormula.GetAttributeMod(PropertyAttribute.Coordination, (int)Coordination.Current);
-            else
-                return SkillFormula.GetAttributeMod(PropertyAttribute.Strength, (int)Strength.Current);
+            var isBow = weapon != null && weapon.IsBow;
+
+            //var attribute = isBow || GetCurrentWeaponSkill() == Skill.FinesseWeapons ? Coordination : Strength;
+            var attribute = isBow || weapon?.WeaponSkill == Skill.FinesseWeapons ? Coordination : Strength;
+
+            return SkillFormula.GetAttributeMod((int)attribute.Current, isBow);
         }
 
         /// <summary>
@@ -1045,6 +1047,45 @@ namespace ACE.Server.WorldObjects
                 return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Returns the damage type for the currently equipped weapon / ammo
+        /// </summary>
+        /// <param name="multiple">If true, returns all of the damage types for the weapon</param>
+        public virtual DamageType GetDamageType(bool multiple = false, CombatType? combatType = null)
+        {
+            // old method, keeping intact for monsters
+            var weapon = GetEquippedWeapon();
+            var ammo = GetEquippedAmmo();
+
+            if (weapon == null)
+                return DamageType.Bludgeon;
+
+            if (combatType == null)
+                combatType = GetCombatType();
+
+            var damageSource = combatType == CombatType.Melee || ammo == null || !weapon.IsAmmoLauncher ? weapon : ammo;
+
+            var damageTypes = damageSource.W_DamageType;
+
+            // returning multiple damage types
+            if (multiple) return damageTypes;
+
+            // get single damage type
+            var motion = CurrentMotionState.MotionState.ForwardCommand.ToString();
+            foreach (DamageType damageType in Enum.GetValues(typeof(DamageType)))
+            {
+                if ((damageTypes & damageType) != 0)
+                {
+                    // handle multiple damage types
+                    if (damageType == DamageType.Slash && motion.Contains("Thrust"))
+                        continue;
+
+                    return damageType;
+                }
+            }
+            return damageTypes;
         }
     }
 }

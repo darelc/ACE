@@ -163,7 +163,7 @@ namespace ACE.Server.WorldObjects
                 // if mansion, send house owner from master copy
                 var houseOwner = HouseOwner;
                 var house = this as House;
-                if (house != null && house.HouseType == ACE.Entity.Enum.HouseType.Mansion)
+                if (house != null && house.HouseType == HouseType.Mansion)
                     houseOwner = house.LinkedHouses[0].HouseOwner;
 
                 writer.Write(houseOwner ?? 0);
@@ -175,14 +175,14 @@ namespace ACE.Server.WorldObjects
 
                 // if house object is in dungeon,
                 // send the permissions from the outdoor house
-                if (house.HouseType != ACE.Entity.Enum.HouseType.Apartment && house.CurrentLandblock.IsDungeon)
+                if (house.HouseType != HouseType.Apartment && house.CurrentLandblock.IsDungeon)
                 {
                     house = house.RootHouse;
                 }
                 else
                 {
                     // if mansion, send permissions from master copy
-                    if (house.HouseType == ACE.Entity.Enum.HouseType.Mansion)
+                    if (house.HouseType == HouseType.Mansion)
                         house = house.LinkedHouses[0];
                 }
 
@@ -362,17 +362,17 @@ namespace ACE.Server.WorldObjects
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.Velocity) != 0)
             {
-                Velocity.Serialize(writer);
+                writer.Write(Velocity.Value);
             }
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.Acceleration) != 0)
             {
-                Acceleration.Serialize(writer);
+                writer.Write(Acceleration.Value);
             }
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.Omega) != 0)
             {
-                Omega.Serialize(writer);
+                writer.Write(Omega.Value);
             }
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.DefaultScript) != 0)
@@ -871,6 +871,12 @@ namespace ACE.Server.WorldObjects
             set { if (!value.HasValue) RemoveProperty(PropertyBool.IgnoreCloIcons); else SetProperty(PropertyBool.IgnoreCloIcons, value.Value); }
         }
 
+        public bool? Dyable
+        {
+            get => GetProperty(PropertyBool.Dyable);
+            set { if (!value.HasValue) RemoveProperty(PropertyBool.Dyable); else SetProperty(PropertyBool.Dyable, value.Value); }
+        }
+
         public virtual ACE.Entity.ObjDesc CalculateObjDesc()
         {
             if (this is Hook hook && hook.HasItem)
@@ -1112,7 +1118,7 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public bool PlayersInRange(float range = 96.0f)
         {
-            var isDungeon = CurrentLandblock != null && CurrentLandblock._landblock != null && CurrentLandblock._landblock.IsDungeon;
+            var isDungeon = CurrentLandblock != null && CurrentLandblock.PhysicsLandblock != null && CurrentLandblock.PhysicsLandblock.IsDungeon;
 
             var rangeSquared = range * range;
 
@@ -1148,7 +1154,7 @@ namespace ACE.Server.WorldObjects
                 self.Session.Network.EnqueueSend(msg);
             }
 
-            var isDungeon = CurrentLandblock._landblock != null && CurrentLandblock._landblock.IsDungeon;
+            var isDungeon = CurrentLandblock.PhysicsLandblock != null && CurrentLandblock.PhysicsLandblock.IsDungeon;
 
             var rangeSquared = range * range;
 

@@ -284,6 +284,34 @@ namespace ACE.Server.WorldObjects
         }
 
         /// <summary>
+        /// Returns the inventory items matching a weenie class name
+        /// </summary>
+        public List<WorldObject> GetInventoryItemsOfWeenieClass(string weenieClassName)
+        {
+            var items = new List<WorldObject>();
+
+            // search main pack / creature
+            var localInventory = Inventory.Values.Where(i => i.WeenieClassName.Equals(weenieClassName, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            items.AddRange(localInventory);
+
+            // next search any side containers
+            var sideContainers = Inventory.Values.Where(i => i.WeenieType == WeenieType.Container).Select(i => i as Container).ToList();
+            foreach (var container in sideContainers)
+                items.AddRange(container.GetInventoryItemsOfWeenieClass(weenieClassName));
+
+            return items;
+        }
+
+        /// <summary>
+        /// Returns the total # of inventory items matching a weenie class name
+        /// </summary>
+        public int GetNumInventoryItemsOfWeenieClass(string weenieClassName)
+        {
+            return GetInventoryItemsOfWeenieClass(weenieClassName).Select(i => i.StackSize ?? 1).Sum();
+        }
+
+        /// <summary>
         /// Returns all of the trade notes from inventory + side packs
         /// </summary>
         public List<WorldObject> GetTradeNotes()
@@ -644,6 +672,26 @@ namespace ACE.Server.WorldObjects
             player.Session.Network.EnqueueSend(itemsToSend.ToArray());
         }
 
+        private void SendDeletesForMyInventory(Player player)
+        {
+            // send deleteobjects for all objects in this container's inventory to player
+            var itemsToSend = new List<GameMessage>();
+
+            foreach (var item in Inventory.Values)
+            {
+                // FIXME: only send messages for known objects
+                itemsToSend.Add(new GameMessageDeleteObject(item));
+
+                if (item is Container container)
+                {
+                    foreach (var containerItem in container.Inventory.Values)
+                        itemsToSend.Add(new GameMessageDeleteObject(containerItem));
+                }
+            }
+
+            player.Session.Network.EnqueueSend(itemsToSend.ToArray());
+        }
+
         public virtual void Close(Player player)
         {
             if (!IsOpen) return;
@@ -754,7 +802,8 @@ namespace ACE.Server.WorldObjects
                     if (sourceItem.StackSize == 0)
                     {
                         TryRemoveFromInventory(sourceItem.Guid);
-                        sourceItem.Destroy();
+                        if (!sourceItem.IsDestroyed)
+                            sourceItem.Destroy();
                         break;
                     }
                 }

@@ -103,7 +103,7 @@ namespace ACE.Server.WorldObjects
                 new GameEventItemServerSaysContainId(Session, item, container),
                 new GameMessagePrivateUpdatePropertyInt(this, PropertyInt.EncumbranceVal, EncumbranceVal ?? 0));
 
-            if (item.WeenieType == WeenieType.Coin)
+            if (item.WeenieType == WeenieType.Coin || item.WeenieType == WeenieType.Container)
                 UpdateCoinValue();
 
             item.SaveBiotaToDatabase();
@@ -291,12 +291,8 @@ namespace ACE.Server.WorldObjects
                     if (item.HasProcSpell((uint)spell.Spell))
                         continue;
 
-                    if (spell.Probability == 0.0f)
-                    {
-                        var _spell = new Spell(spell.Spell, false);
-                        log.Warn($"{Name}.TryEquipObjectWithNetworking({item.Name} ({item.Guid}, wcid {item.WeenieClassId})) - spellbook contains {_spell.Name} probability 0, ignoring");
+                    if (spell.Spell == item.SpellDID)
                         continue;
-                    }
 
                     var enchantmentStatus = CreateItemSpell(item, (uint)spell.Spell);
                     if (enchantmentStatus.Success)
@@ -679,7 +675,7 @@ namespace ACE.Server.WorldObjects
             if (!item.Guid.IsDynamic() || item is Creature || item.Stuck)
             {
                 log.WarnFormat("Player 0x{0:X8}:{1} tried to move item 0x{2:X8}:{3}.", Guid.Full, Name, item.Guid.Full, item.Name);
-                Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "You can't move that!")); // Custom error message
+                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.Stuck));
                 Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, itemGuid));
                 return;
             }
@@ -813,6 +809,7 @@ namespace ACE.Server.WorldObjects
 
                         var questSolve = false;
                         var isFromMyCorpse = false;
+                        var isFromAPlayerCorpse = false;
                         var isFromMyHook = false;
                         var isFromMyStorage = false;
 
@@ -840,6 +837,9 @@ namespace ACE.Server.WorldObjects
                                     questSolve = true;
                             }
                         }
+
+                        if (itemRootOwner is Corpse && itemRootOwner.Level.HasValue)
+                            isFromAPlayerCorpse = true;
 
                         if (DoHandleActionPutItemInContainer(item, itemRootOwner, itemWasEquipped, container, containerRootOwner, placement))
                         {
@@ -870,6 +870,12 @@ namespace ACE.Server.WorldObjects
 
                                 if (questSolve)
                                     QuestManager.Update(item.Quest);
+
+                                if (isFromAPlayerCorpse)
+                                {
+                                    log.Debug($"[CORPSE] {Name} (0x{Guid}) picked up {item.Name} (0x{item.Guid}) from {itemRootOwner.Name} (0x{itemRootOwner.Guid})");
+                                    item.SaveBiotaToDatabase();
+                                }
                             }
                         }
 
@@ -1108,6 +1114,14 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            if (!item.Guid.IsDynamic() || item is Creature || item.Stuck)
+            {
+                log.WarnFormat("Player 0x{0:X8}:{1} tried to move item 0x{2:X8}:{3}.", Guid.Full, Name, item.Guid.Full, item.Name);
+                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.Stuck));
+                Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, itemGuid));
+                return;
+            }
+
             if (rootOwner != this && !HasEnoughBurdenToAddToInventory(item))
             {
                 Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "You are too encumbered to carry that!"));
@@ -1115,8 +1129,23 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            if (!item.ValidLocations.HasValue || item.ValidLocations == EquipMask.None)
+            {
+                log.WarnFormat("Player 0x{0:X8}:{1} tried to wield item 0x{2:X8}:{3} to {4} (0x{4:X}), not in item's validlocatiions {5} (0x{5:X}).", Guid.Full, Name, item.Guid.Full, item.Name, wieldedLocation, item.ValidLocations ?? 0);
+                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.InvalidInventoryLocation));
+                Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, itemGuid));
+                return;
+            }
+
             if (rootOwner != this) // Item is on the landscape, or in a landblock chest
             {
+                if (CombatMode != CombatMode.NonCombat)
+                {
+                    Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "Cannot pick that up and wield it while not at peace!")); // Custom error message
+                    Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, itemGuid));
+                    return;
+                }
+
                 CreateMoveToChain(rootOwner ?? item, (success) =>
                 {
                     if (CurrentLandblock == null) // Maybe we were teleported as we were motioning to pick up the item
@@ -1311,7 +1340,7 @@ namespace ACE.Server.WorldObjects
                 if (IsInChildLocation(item))
                 {
                     ResetChild(item);
-                    EnqueueBroadcast(new GameMessageParentEvent(this, item, (int?)item.ParentLocation ?? 0, (int?)item.Placement ?? 0));
+                    EnqueueBroadcast(new GameMessageParentEvent(this, item));
 
                     // handle swapping dual-wielded weapons
                     if (IsDoubleSend)
@@ -1519,6 +1548,14 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            if (!stack.Guid.IsDynamic() || stack.Stuck)
+            {
+                log.WarnFormat("Player 0x{0:X8}:{1} tried to move item 0x{2:X8}:{3}.", Guid.Full, Name, stack.Guid.Full, stack.Name);
+                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.Stuck));
+                Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, stackId));
+                return;
+            }
+
             if (stackRootOwner != this && containerRootOwner == this && !HasEnoughBurdenToAddToInventory(stack))
             {
                 Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "You are too encumbered to carry that!"));
@@ -1548,7 +1585,7 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
-            if (stack.StackSize < amount)
+            if (stack.StackSize <= amount)
             {
                 log.WarnFormat("Player 0x{0:X8}:{1} tried to split item with invalid amount ({4}) 0x{2:X8}:{3}.", Guid.Full, Name, stack.Guid.Full, stack.Name, amount);
                 Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "Split amount not valid!")); // Custom error message
@@ -1706,7 +1743,7 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
-            if (stack.StackSize < amount)
+            if (stack.StackSize <= amount)
             {
                 log.WarnFormat("Player 0x{0:X8}:{1} tried to split item with invalid amount ({4}) 0x{2:X8}:{3}.", Guid.Full, Name, stack.Guid.Full, stack.Name, amount);
                 Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "Split amount not valid!")); // Custom error message
@@ -1788,6 +1825,14 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            if (!sourceStack.Guid.IsDynamic() || sourceStack.Stuck)
+            {
+                log.WarnFormat("Player 0x{0:X8}:{1} tried to move item 0x{2:X8}:{3}.", Guid.Full, Name, sourceStack.Guid.Full, sourceStack.Name);
+                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.Stuck));
+                Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, mergeFromGuid));
+                return;
+            }
+
             if (sourceStackRootOwner != this && targetStackRootOwner == this && !HasEnoughBurdenToAddToInventory(sourceStack))
             {
                 Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "You are too encumbered to carry that!"));
@@ -1799,6 +1844,14 @@ namespace ACE.Server.WorldObjects
             {
                 Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "Target stack not found!")); // Custom error message
                 Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, mergeFromGuid));
+                return;
+            }
+
+            if (!targetStack.Guid.IsDynamic() || targetStack.Stuck)
+            {
+                log.WarnFormat("Player 0x{0:X8}:{1} tried to move item 0x{2:X8}:{3}.", Guid.Full, Name, targetStack.Guid.Full, targetStack.Name);
+                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.Stuck));
+                Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, mergeToGuid));
                 return;
             }
 
@@ -2194,7 +2247,7 @@ namespace ACE.Server.WorldObjects
         {
             if (target == null || item == null) return;
 
-            if (PropertyManager.GetBool("iou_trades").Item && item.Name == "IOU" && item.WeenieType == WeenieType.Book && target.Name == "Town Crier")
+            if (item.Name == "IOU" && item.WeenieType == WeenieType.Book && target.Name == "Town Crier")
             {
                 HandleIOUTurnIn(target, item);
                 return;
@@ -2246,6 +2299,8 @@ namespace ACE.Server.WorldObjects
 
                             Session.Network.EnqueueSend(new GameMessageSystemChat($"You give {target.Name} {stackMsg}{itemName}.", ChatMessageType.Broadcast));
                             Session.Network.EnqueueSend(new GameMessageSound(Guid, Sound.ReceiveItem));
+
+                            item.Destroy();
                         }
                         else
                         {
@@ -2272,11 +2327,18 @@ namespace ACE.Server.WorldObjects
             Session.Network.EnqueueSend(new GameMessageSystemChat($"You allow {target.Name} to examine your {iouToTurnIn.NameWithMaterial}.", ChatMessageType.Broadcast));
             Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, iouToTurnIn.Guid.Full, WeenieError.TradeAiRefuseEmote));
 
-            if (iouToTurnIn is Book book)
+            if (!PropertyManager.GetBool("iou_trades").Item)
+            {
+                //Session.Network.EnqueueSend(new GameMessageHearDirectSpeech(target, "Hmm... Something isn't quite right with this IOU. I can't seem to make out what its for. I'm sorry!", this, ChatMessageType.Tell));
+                Session.Network.EnqueueSend(new GameEventWeenieErrorWithString(Session, (WeenieErrorWithString)WeenieError.TradeAiDoesntWant, target.Name));
+                return;
+            }
+
+            if (iouToTurnIn is Book book && book.ScribeName == "ACEmulator" && book.ScribeAccount == "prewritten")
             {
                 var page = book.GetPage(0);
 
-                if (page != null)
+                if (page != null && page.AuthorName == "ACEmulator" && page.AuthorAccount == "prewritten" && page.AuthorId == uint.MaxValue)
                 {
                     var pageText = page.PageText;
 
@@ -2313,7 +2375,7 @@ namespace ACE.Server.WorldObjects
                                     if (PropertyManager.GetBool("player_receive_immediate_save").Item)
                                         RushNextPlayerSave(5);
 
-                                    log.Info($"{Name} (0x{Guid}) traded in a IOU (0x{iouToTurnIn.Guid}) for {wcid} which became {item.Name} (0x{item.Guid}).");
+                                    log.Debug($"[IOU] {Name} (0x{Guid}) traded in a IOU (0x{iouToTurnIn.Guid}) for {wcid} which became {item.Name} (0x{item.Guid}).");
                                 }
                                 return;
                             }

@@ -50,7 +50,7 @@ namespace ACE.Server.WorldObjects
             {
                 if (sourcePlayer != null)
                 {
-                    // player damage monster
+                    // player damage monster or player
                     damageEvent = sourcePlayer.DamageTarget(targetCreature, WorldObject);
 
                     if (damageEvent != null && damageEvent.HasDamage)
@@ -97,7 +97,7 @@ namespace ACE.Server.WorldObjects
                     sourceCreature?.TryProcEquippedItems(targetCreature, false);
             }
 
-            WorldObject.CurrentLandblock?.RemoveWorldObject(WorldObject.Guid, false);
+            WorldObject.CurrentLandblock?.RemoveWorldObject(WorldObject.Guid, showError: !PhysicsObj.entering_world);
             PhysicsObj.set_active(false);
         }
 
@@ -107,7 +107,7 @@ namespace ACE.Server.WorldObjects
 
             //Console.WriteLine("Projectile.OnCollideEnvironment(" + Guid.Full.ToString("X8") + ")");
 
-            WorldObject.CurrentLandblock?.RemoveWorldObject(WorldObject.Guid, false);
+            WorldObject.CurrentLandblock?.RemoveWorldObject(WorldObject.Guid, showError: !PhysicsObj.entering_world);
             PhysicsObj.set_active(false);
 
             var player = ProjectileSource as Player;

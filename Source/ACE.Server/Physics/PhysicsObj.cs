@@ -10,6 +10,7 @@ using ACE.Server.Physics.Collision;
 using ACE.Server.Physics.Combat;
 using ACE.Server.Physics.Common;
 using ACE.Server.Physics.Hooks;
+using ACE.Server.Physics.Managers;
 using ACE.Server.WorldObjects;
 
 using log4net;
@@ -502,7 +503,7 @@ namespace ACE.Server.Physics
 
         public PhysicsObj GetObjectA(uint objectID)
         {
-            return ObjectMaint.GetObjectA(objectID);
+            return ServerObjectManager.GetObjectA(objectID);
         }
 
         public float GetRadius()
@@ -1491,7 +1492,7 @@ namespace ACE.Server.Physics
         public void TurnToObject(uint objectID, MovementParameters movementParams)
         {
             if (ObjMaint == null) return;
-            var obj = ObjectMaint.GetObjectA(objectID);
+            var obj = ServerObjectManager.GetObjectA(objectID);
             if (obj == null) return;
             var parent = obj.Parent != null ? obj.Parent : obj;
 
@@ -1574,7 +1575,7 @@ namespace ACE.Server.Physics
 
                 if (GetBlockDist(Position, newPos) > 1)
                 {
-                    Console.WriteLine($"WARNING: failed transition for {Name} from {Position} to {newPos}\n");
+                    log.Warn($"WARNING: failed transition for {Name} from {Position} to {newPos}");
                     return;
                 }
 
@@ -1642,15 +1643,17 @@ namespace ACE.Server.Physics
             return Math.Max(dx, dy);
         }
 
-        public void UpdateObjectInternalServer(double quantum)
+        public bool UpdateObjectInternalServer(double quantum)
         {
             //var offsetFrame = new AFrame();
             //UpdatePhysicsInternal((float)quantum, ref offsetFrame);
             if (GetBlockDist(Position, RequestPos) > 1)
             {
-                Console.WriteLine($"WARNING: failed transition for {Name} from {Position} to {RequestPos}\n");
-                return;
+                log.Warn($"WARNING: failed transition for {Name} from {Position} to {RequestPos}");
+                return false;
             }
+
+            var requestCell = RequestPos.ObjCellID;
 
             var transit = transition(Position, RequestPos, false);
             if (transit != null)
@@ -1672,6 +1675,8 @@ namespace ACE.Server.Physics
             if (ParticleManager != null) ParticleManager.UpdateParticles();
 
             if (ScriptManager != null) ScriptManager.UpdateScripts();
+
+            return requestCell >> 16 != 0x18A || CurCell?.ID >> 16 == requestCell >> 16;
         }
 
         public void UpdateAnimationInternal(double quantum)
@@ -2266,6 +2271,10 @@ namespace ACE.Server.Physics
             enter_cell(newCell);
             RequestPos.ObjCellID = newCell.ID;
 
+            // sync location for initial CO
+            if (entering_world)
+                WeenieObj.WorldObject.SyncLocation();
+
             // handle self
             if (IsPlayer)
             {
@@ -2287,10 +2296,18 @@ namespace ACE.Server.Physics
             }
         }
 
+        public bool entering_world;
+
         public bool enter_world(Position pos)
         {
+            entering_world = true;
+
             store_position(pos);
-            return enter_world(true);
+            bool slide = ProjectileTarget == null || WeenieObj.WorldObject is SpellProjectile;
+            var result = enter_world(slide);
+
+            entering_world = false;
+            return result;
         }
 
         public bool enter_world(bool slide)
@@ -3161,7 +3178,7 @@ namespace ACE.Server.Physics
 
             foreach (var objectID in CollisionTable.Keys)
             {
-                var obj = ObjectMaint.GetObjectA(objectID);
+                var obj = ServerObjectManager.GetObjectA(objectID);
                 if (obj != null)
                     report_object_collision(obj, TransientState.HasFlag(TransientStateFlags.Contact));
             }
@@ -3234,7 +3251,7 @@ namespace ACE.Server.Physics
         {
             if (ObjMaint != null)
             {
-                var collision = ObjectMaint.GetObjectA(objectID);
+                var collision = ServerObjectManager.GetObjectA(objectID);
                 if (collision != null)
                 {
                     if (!collision.State.HasFlag(PhysicsState.ReportCollisionsAsEnvironment))
@@ -3587,7 +3604,7 @@ namespace ACE.Server.Physics
             ObjID = guid;
             ID = guid.Full;
 
-            ObjectMaint.AddServerObject(this);
+            ServerObjectManager.AddServerObject(this);
         }
 
         /// <summary>
@@ -3812,7 +3829,7 @@ namespace ACE.Server.Physics
             MakePositionManager();
             if (ObjMaint == null) return;
 
-            var objectA = ObjectMaint.GetObjectA(objectID);
+            var objectA = ServerObjectManager.GetObjectA(objectID);
             if (objectA == null) return;
             if (objectA.Parent != null)
                 objectA = Parent;
@@ -4055,15 +4072,16 @@ namespace ACE.Server.Physics
                 Console.WriteLine($"{(MotionCommand)motion.Motion}");
         }
 
-        public void update_object_server(bool forcePos = true)
+        public bool update_object_server(bool forcePos = true)
         {
             var deltaTime = PhysicsTimer.CurrentTime - UpdateTime;
 
             var wo = WeenieObj.WorldObject;
+            var success = true;
             if (wo != null && !wo.Teleporting)
-                UpdateObjectInternalServer(deltaTime);
+                success = UpdateObjectInternalServer(deltaTime);
 
-            if (forcePos)
+            if (forcePos && success)
                 set_current_pos(RequestPos);
 
             // temp for players
@@ -4071,6 +4089,8 @@ namespace ACE.Server.Physics
                 CachedVelocity = Vector3.Zero;
 
             UpdateTime = PhysicsTimer.CurrentTime;
+
+            return success;
         }
 
         public void update_position()

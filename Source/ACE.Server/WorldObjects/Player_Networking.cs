@@ -19,6 +19,7 @@ namespace ACE.Server.WorldObjects
         public void PlayerEnterWorld()
         {
             PlayerManager.SwitchPlayerFromOfflineToOnline(this);
+            Teleporting = true;
 
             // Save the the LoginTimestamp
             var lastLoginTimestamp = Time.GetUnixTime();
@@ -41,6 +42,9 @@ namespace ACE.Server.WorldObjects
 
             // SendSelf will trigger the entrance into portal space
             SendSelf();
+
+            // Update or override certain properties sent to client.
+            SendPropertyUpdatesAndOverrides();
 
             // Init the client with the chat channel ID's, and then notify the player that they've choined the associated channels.
             UpdateChatChannels();
@@ -100,6 +104,12 @@ namespace ACE.Server.WorldObjects
             SendInventoryAndWieldedItems();
 
             SendContractTrackerTable();
+        }
+
+        private void SendPropertyUpdatesAndOverrides()
+        {
+            if (!PropertyManager.GetBool("require_spell_comps").Item)
+                Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyBool(this, PropertyBool.SpellComponentsRequired, false));
         }
 
         /// <summary>
@@ -219,6 +229,57 @@ namespace ACE.Server.WorldObjects
 
             // TODO: use real motion / animation system from physics
             CurrentMotionCommand = movementData.Invalid.State.ForwardCommand;
+        }
+
+        private EnvironChangeType? currentFogColor;
+
+        public void SetFogColor(EnvironChangeType fogColor)
+        {
+            if (fogColor == EnvironChangeType.Clear && !currentFogColor.HasValue)
+                return;                
+
+            if (LandblockManager.GlobalFogColor.HasValue && currentFogColor != fogColor)
+            {
+                currentFogColor = LandblockManager.GlobalFogColor;
+                SendEnvironChange(currentFogColor.Value);
+            }
+            else if (currentFogColor != fogColor)
+            {
+                currentFogColor = fogColor;
+                SendEnvironChange(currentFogColor.Value);
+            }
+
+            if (currentFogColor == EnvironChangeType.Clear)
+                currentFogColor = null;
+        }
+
+        public void ClearFogColor()
+        {
+            SetFogColor(EnvironChangeType.Clear);
+        }
+
+        public void SendEnvironChange(EnvironChangeType environChangeType)
+        {
+            Session.Network.EnqueueSend(new GameMessageAdminEnvirons(Session, environChangeType));
+        }
+
+        public void SetPlayerKillerStatus(PlayerKillerStatus playerKillerStatus, bool broadcast = false)
+        {
+            switch (playerKillerStatus)
+            {
+                case PlayerKillerStatus.NPK:
+                case PlayerKillerStatus.PK:
+                case PlayerKillerStatus.PKLite:
+                    PlayerKillerStatus = PlayerKillerStatus.NPK;
+                    MinimumTimeSincePk = 0;
+                    break;
+                case PlayerKillerStatus.Free:
+                    PlayerKillerStatus = PlayerKillerStatus.Free;
+                    break;
+            }
+
+            if (broadcast)
+                EnqueueBroadcast(new GameMessagePublicUpdatePropertyInt(this, PropertyInt.PlayerKillerStatus, (int)PlayerKillerStatus));
         }
     }
 }

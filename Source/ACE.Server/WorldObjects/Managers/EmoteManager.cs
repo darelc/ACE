@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using ACE.Common.Extensions;
 using ACE.Database;
 using ACE.Database.Models.Shard;
+using ACE.Database.Models.World;
 using ACE.DatLoader;
 using ACE.Entity;
 using ACE.Entity.Enum;
@@ -14,17 +15,18 @@ using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity;
 using ACE.Server.Entity.Actions;
 using ACE.Server.Factories;
+using ACE.Server.Managers;
 using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
-using ACE.Server.WorldObjects;
 
 using log4net;
 
 using Position = ACE.Entity.Position;
+using Spell = ACE.Server.Entity.Spell;
 
-namespace ACE.Server.Managers
+namespace ACE.Server.WorldObjects.Managers
 {
-    public partial class EmoteManager
+    public class EmoteManager
     {
         private static readonly ILog log = LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
 
@@ -253,12 +255,7 @@ namespace ACE.Server.Managers
 
                 case EmoteType.DeleteSelf:
 
-                    var destroyChain = new ActionChain();
-                    destroyChain.AddAction(WorldObject, () => WorldObject.ApplyVisualEffects(PlayScript.Destroy));
-                    delay = 3.0f;
-                    destroyChain.AddDelaySeconds(delay);
-                    destroyChain.AddAction(WorldObject, () => WorldObject.Destroy());
-                    destroyChain.EnqueueChain();
+                    WorldObject.Destroy();
 
                     break;
 
@@ -894,7 +891,9 @@ namespace ACE.Server.Managers
 
                 case EmoteType.RemoveVitaePenalty:
 
-                    if (player != null) player.VitaeCpPool = 0;     // TODO: call full path
+                    if (player != null)
+                        player.EnchantmentManager.RemoveVitae();
+
                     break;
 
                 case EmoteType.ResetHomePosition:
@@ -1066,16 +1065,32 @@ namespace ACE.Server.Managers
                 case EmoteType.TakeItems:
 
                     if (player != null)
-                        if (player.TryConsumeFromInventoryWithNetworking(emote.WeenieClassId ?? 0, emote.StackSize ?? 0))
+                    {
+                        var weenieItemToTake = emote.WeenieClassId ?? 0;
+                        var amountToTake = emote.StackSize ?? 0;
+
+                        if (weenieItemToTake == 0)
                         {
-                            var itemTaken = WorldObjectFactory.CreateWorldObject(DatabaseManager.World.GetCachedWeenie(emote.WeenieClassId ?? 0), ObjectGuid.Invalid);
+                            log.Warn($"EmoteManager.Excute: 0x{WorldObject.Guid} {WorldObject.Name} ({WorldObject.WeenieClassId}) EmoteType.TakeItems has invalid emote.WeenieClassId: {weenieItemToTake}");
+                            break;
+                        }
+
+                        if (amountToTake < -1 || amountToTake == 0)
+                        {
+                            log.Warn($"EmoteManager.Excute: 0x{WorldObject.Guid} {WorldObject.Name} ({WorldObject.WeenieClassId}) EmoteType.TakeItems has invalid emote.StackSize: {amountToTake}");
+                            break;
+                        }
+
+                        if (player.TryConsumeFromInventoryWithNetworking(weenieItemToTake, amountToTake == -1 ? int.MaxValue : amountToTake))
+                        {
+                            var itemTaken = DatabaseManager.World.GetCachedWeenie(weenieItemToTake);
                             if (itemTaken != null)
                             {
-                                var msg = $"You hand over {emote.StackSize ?? 1} of your {itemTaken.GetPluralName()}.";
+                                var msg = $"You hand over {(player.GetNumInventoryItemsOfWCID(itemTaken.ClassId) == 0 ? "all" : amountToTake.ToString())} of your {itemTaken.GetPluralName()}.";
                                 player.Session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.Broadcast));
                             }
                         }
-
+                    }
                     break;
 
                 case EmoteType.TeachSpell:
@@ -1495,6 +1510,14 @@ namespace ACE.Server.Managers
         public void OnLocalSignal(Player player, string message)
         {
             ExecuteEmoteSet(EmoteCategory.ReceiveLocalSignal, message, player);
+        }
+
+        /// <summary>
+        /// Called when monster exceeds the maximum distance from home position
+        /// </summary>
+        public void OnHomeSick(WorldObject attackTarget)
+        {
+            ExecuteEmoteSet(EmoteCategory.Homesick, null, attackTarget);
         }
 
         //public bool HasAntennas => WorldObject.Biota.BiotaPropertiesEmote.Count(x => x.Category == (int)EmoteCategory.ReceiveLocalSignal) > 0;

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 
@@ -9,14 +8,13 @@ using ACE.Database.Models.Shard;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity;
+using ACE.Server.Managers;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.Structure;
-using ACE.Server.Physics;
-using ACE.Server.WorldObjects;
 using ACE.Server.WorldObjects.Entity;
 
-namespace ACE.Server.Managers
+namespace ACE.Server.WorldObjects.Managers
 {
     public enum StackType
     {
@@ -355,7 +353,8 @@ namespace ACE.Server.Managers
         /// </summary>
         public virtual void RemoveAllEnchantments()
         {
-            var spellsToExclude = WorldObject.Biota.GetEnchantments(WorldObject.BiotaDatabaseLock).Where(i => i.Duration == -1).Select(i => i.SpellId);
+            // exclude cooldowns and enchantments from items
+            var spellsToExclude = WorldObject.Biota.GetEnchantments(WorldObject.BiotaDatabaseLock).Where(i => i.Duration == -1 || i.SpellId > short.MaxValue).Select(i => i.SpellId);
 
             WorldObject.Biota.RemoveAllEnchantments(spellsToExclude, WorldObject.BiotaDatabaseLock);
             WorldObject.ChangesDetected = true;
@@ -1290,7 +1289,7 @@ namespace ACE.Server.Managers
             creature.DamageHistory.OnHeal((uint)healAmount);
 
             if (creature is Player player)
-                player.SendMessage($"You receive {healAmount} points of periodic healing.", ChatMessageType.Combat);
+                player.SendMessage($"You receive {healAmount} points of periodic healing.", PropertyManager.GetBool("aetheria_heal_color").Item ? ChatMessageType.Broadcast : ChatMessageType.Combat);
         }
 
         /// <summary>

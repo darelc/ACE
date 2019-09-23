@@ -8,6 +8,7 @@ using log4net;
 
 using ACE.Common;
 using ACE.Entity;
+using ACE.Entity.Enum;
 using ACE.Server.Entity;
 using ACE.Server.WorldObjects;
 
@@ -154,6 +155,54 @@ namespace ACE.Server.Managers
             0x5369FFFF
         };
 
+        public static void Tick(double portalYearTicks)
+        {
+            // update positions through physics engine
+            ServerPerformanceMonitor.RegisterEventStart(ServerPerformanceMonitor.MonitorType.LandblockManager_TickPhysics);
+            TickPhysics(portalYearTicks);
+            ServerPerformanceMonitor.RegisterEventEnd(ServerPerformanceMonitor.MonitorType.LandblockManager_TickPhysics);
+
+            // Tick all of our Landblocks and WorldObjects
+            ServerPerformanceMonitor.RegisterEventStart(ServerPerformanceMonitor.MonitorType.LandblockManager_Tick);
+            Tick();
+            ServerPerformanceMonitor.RegisterEventEnd(ServerPerformanceMonitor.MonitorType.LandblockManager_Tick);
+
+            // clean up inactive landblocks
+            UnloadLandblocks();
+        }
+
+        /// <summary>
+        /// Processes physics objects in all active landblocks for updating
+        /// </summary>
+        private static void TickPhysics(double portalYearTicks)
+        {
+            var activeLandblocks = GetActiveLandblocks();
+
+            var movedObjects = new ConcurrentBag<WorldObject>();
+
+            foreach (var landblock in activeLandblocks)
+                landblock.TickPhysics(portalYearTicks, movedObjects);
+
+            // iterate through objects that have changed landblocks
+            foreach (var movedObject in movedObjects)
+            {
+                // NOTE: The object's Location can now be null, if a player logs out, or an item is picked up
+                if (movedObject.Location == null)
+                    continue;
+
+                // assume adjacency move here?
+                RelocateObjectForPhysics(movedObject, true);
+            }
+        }
+
+        private static void Tick()
+        {
+            var loadedLandblocks = GetLoadedLandblocks();
+
+            foreach (var landblock in loadedLandblocks)
+                landblock.Tick(Time.GetUnixTime());
+        }
+
         /// <summary>
         /// Adds a WorldObject to the landblock defined by the object's location
         /// </summary>
@@ -189,10 +238,12 @@ namespace ACE.Server.Managers
         /// </summary>
         public static Landblock GetLandblock(LandblockId landblockId, bool loadAdjacents, bool permaload = false)
         {
-            Landblock landblock = null;
+            Landblock landblock;
 
             lock (landblockMutex)
             {
+                bool setAdjacents = false;
+
                 landblock = landblocks[landblockId.LandblockX, landblockId.LandblockY];
 
                 if (landblock == null)
@@ -205,22 +256,29 @@ namespace ACE.Server.Managers
                         log.Error($"LandblockManager: failed to add {landblock.Id.Raw:X8} to active landblocks!");
                         return landblock;
                     }
+
+                    landblock.Init();
+
+                    setAdjacents = true;
                 }
 
                 if (permaload)
                     landblock.Permaload = true;
-            }
 
-            // load adjacents, if applicable
-            if (loadAdjacents)
-            {
-                var adjacents = GetAdjacentIDs(landblock);
-                foreach (var adjacent in adjacents)
-                    GetLandblock(adjacent, false, permaload);
-            }
+                // load adjacents, if applicable
+                if (loadAdjacents)
+                {
+                    var adjacents = GetAdjacentIDs(landblock);
+                    foreach (var adjacent in adjacents)
+                        GetLandblock(adjacent, false, permaload);
 
-            // cache adjacencies
-            SetAdjacents(landblock, true, true);
+                    setAdjacents = true;
+                }
+
+                // cache adjacencies
+                if (setAdjacents)
+                    SetAdjacents(landblock, true, true);
+            }
 
             return landblock;
         }
@@ -243,19 +301,6 @@ namespace ACE.Server.Managers
                 return loadedLandblocks.Where(r => !r.IsDormant).ToList();
         }
 
-        public static List<Landblock> GetAdjacents(LandblockId landblockID)
-        {
-            Landblock landblock;
-
-            lock (landblockMutex)
-                landblock = landblocks[landblockID.LandblockX, landblockID.LandblockY];
-
-            if (landblock == null)
-                return null;
-
-            return GetAdjacents(landblock);
-        }
-
         /// <summary>
         /// Returns the active, non-null adjacents for a landblock
         /// </summary>
@@ -265,15 +310,13 @@ namespace ACE.Server.Managers
 
             var adjacents = new List<Landblock>();
 
-            lock (landblockMutex)
+            foreach (var adjacentID in adjacentIDs)
             {
-                foreach (var adjacentID in adjacentIDs)
-                {
-                    var adjacent = landblocks[adjacentID.LandblockX, adjacentID.LandblockY];
-                    if (adjacent != null)
-                        adjacents.Add(adjacent);
-                }
+                var adjacent = landblocks[adjacentID.LandblockX, adjacentID.LandblockY];
+                if (adjacent != null)
+                    adjacents.Add(adjacent);
             }
+
             return adjacents;
         }
 
@@ -371,10 +414,7 @@ namespace ACE.Server.Managers
             landblock.Adjacents = GetAdjacents(landblock);
 
             if (pSync)
-            {
-                var pLandblock = Physics.Common.LScape.get_landblock(landblock.Id.Raw | 0xFFFF);
-                pLandblock.get_adjacents(true);
-            }
+                landblock.PhysicsLandblock.SetAdjacents(landblock.Adjacents);
 
             if (traverse)
             {
@@ -394,7 +434,7 @@ namespace ACE.Server.Managers
         /// <summary>
         /// Processes the destruction queue in a thread-safe manner
         /// </summary>
-        public static void UnloadLandblocks()
+        private static void UnloadLandblocks()
         {
             while (!destructionQueue.IsEmpty)
             {
@@ -443,6 +483,42 @@ namespace ACE.Server.Managers
             {
                 foreach (var landblock in loadedLandblocks)
                     AddToDestructionQueue(landblock);
+            }
+        }
+
+        public static EnvironChangeType? GlobalFogColor;
+
+        private static void SetGlobalFogColor(EnvironChangeType environChangeType)
+        {
+            if (environChangeType.IsFog())
+            {
+                if (environChangeType == EnvironChangeType.Clear)
+                    GlobalFogColor = null;
+                else
+                    GlobalFogColor = environChangeType;
+
+                foreach (var landblock in loadedLandblocks)
+                    landblock.SendCurrentEnviron();
+            }
+        }
+
+        private static void SendGlobalEnvironSound(EnvironChangeType environChangeType)
+        {
+            if (environChangeType.IsSound())
+            {
+                foreach (var landblock in loadedLandblocks)
+                    landblock.SendEnvironChange(environChangeType);
+            }
+        }
+
+        public static void DoEnvironChange(EnvironChangeType environChangeType)
+        {
+            lock (landblockMutex)
+            {
+                if (environChangeType.IsFog())
+                    SetGlobalFogColor(environChangeType);
+                else
+                    SendGlobalEnvironSound(environChangeType);
             }
         }
     }

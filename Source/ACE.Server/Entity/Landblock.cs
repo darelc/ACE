@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
+
 using log4net;
 
 using ACE.Common;
@@ -109,7 +111,7 @@ namespace ACE.Server.Entity
         /// The clientlib backing store landblock
         /// Eventually these classes could be merged, but for now they are separate...
         /// </summary>
-        public Physics.Common.Landblock _landblock { get; private set; }
+        public Physics.Common.Landblock PhysicsLandblock { get; }
 
         public CellLandblock CellLandblock { get; }
         public LandblockInfo LandblockInfo { get; }
@@ -125,10 +127,30 @@ namespace ACE.Server.Entity
         public List<ModelMesh> Scenery { get; private set; }
 
 
+        public readonly RateMonitor Monitor5m = new RateMonitor();
+        private readonly TimeSpan last5mClearInteval = TimeSpan.FromMinutes(5);
+        private DateTime last5mClear;
         public readonly RateMonitor Monitor1h = new RateMonitor();
         private readonly TimeSpan last1hClearInteval = TimeSpan.FromHours(1);
         private DateTime last1hClear;
+        private bool monitorsRequireEventStart = true;
 
+        private EnvironChangeType fogColor;
+
+        public EnvironChangeType FogColor
+        {
+            get
+            {
+                if (LandblockManager.GlobalFogColor.HasValue)
+                    return LandblockManager.GlobalFogColor.Value;
+                else
+                    return fogColor;
+            }
+            set
+            {
+                fogColor = value;
+            }
+        }
 
         public Landblock(LandblockId id)
         {
@@ -141,10 +163,16 @@ namespace ACE.Server.Entity
 
             lastActiveTime = DateTime.UtcNow;
 
+            var cellLandblock = DBObj.GetCellLandblock(Id.Raw | 0xFFFF);
+            PhysicsLandblock = new Physics.Common.Landblock(cellLandblock);
+        }
+
+        public void Init()
+        {
+            PhysicsLandblock.PostInit();
+
             Task.Run(() =>
             {
-                _landblock = LScape.get_landblock(Id.Raw);
-
                 CreateWorldObjects();
 
                 SpawnDynamicShardObjects();
@@ -200,7 +228,7 @@ namespace ACE.Server.Entity
 
                 CreateWorldObjectsCompleted = true;
 
-                _landblock.SortObjects();
+                PhysicsLandblock.SortObjects();
             }));
         }
 
@@ -243,7 +271,7 @@ namespace ACE.Server.Entity
                 pos.Frame = new Physics.Animation.AFrame(new Vector3(xPos, yPos, 0), Quaternion.Identity);
                 pos.adjust_to_outside();
 
-                pos.Frame.Origin.Z = _landblock.GetZ(pos.Frame.Origin);
+                pos.Frame.Origin.Z = PhysicsLandblock.GetZ(pos.Frame.Origin);
 
                 wo.Location = new Position(pos.ObjCellID, pos.Frame.Origin, pos.Frame.Orientation);
 
@@ -254,6 +282,8 @@ namespace ACE.Server.Entity
                 if (PropertyManager.GetBool("override_encounter_spawn_rates").Item)
                 {
                     wo.RegenerationInterval = PropertyManager.GetDouble("encounter_regen_interval").Item;
+
+                    wo.ReinitializeHeartbeats();
 
                     foreach (var profile in wo.Biota.BiotaPropertiesGenerator)
                     {
@@ -330,9 +360,72 @@ namespace ACE.Server.Entity
             Scenery = Entity.Scenery.Load(this);
         }
 
+        public void TickPhysics(double portalYearTicks, ConcurrentBag<WorldObject> movedObjects)
+        {
+            Monitor5m.RegisterEventStart();
+            Monitor1h.RegisterEventStart();
+            monitorsRequireEventStart = false;
+
+            foreach (WorldObject wo in GetWorldObjectsForPhysicsHandling())
+            {
+                // set to TRUE if object changes landblock
+                var landblockUpdate = false;
+
+                // detect player movement
+                // TODO: handle players the same as everything else
+                if (wo is Player player)
+                {
+                    wo.InUpdate = true;
+
+                    var newPosition = HandlePlayerPhysics(player);
+
+                    // update position through physics engine
+                    if (newPosition != null)
+                        landblockUpdate = wo.UpdatePlayerPhysics(newPosition);
+
+                    wo.InUpdate = false;
+                }
+                else
+                    landblockUpdate = wo.UpdateObjectPhysics();
+
+                if (landblockUpdate)
+                    movedObjects.Add(wo);
+            }
+
+            Monitor5m.PauseEvent();
+            Monitor1h.PauseEvent();
+        }
+
+        /// <summary>
+        /// Detects if player has moved through ForcedLocation or RequestedLocation
+        /// </summary>
+        private static Position HandlePlayerPhysics(Player player)
+        {
+            Position newPosition = null;
+
+            if (player.ForcedLocation != null)
+                newPosition = player.ForcedLocation;
+            else if (player.RequestedLocation != null)
+                newPosition = player.RequestedLocation;
+
+            if (newPosition != null)
+                player.ClearRequestedPositions();
+
+            return newPosition;
+        }
+
         public void Tick(double currentUnixTime)
         {
-            Monitor1h.RegisterEventStart();
+            if (monitorsRequireEventStart)
+            {
+                Monitor5m.RegisterEventStart();
+                Monitor1h.RegisterEventStart();
+            }
+            else
+            {
+                Monitor5m.ResumeEvent();
+                Monitor1h.ResumeEvent();
+            }
 
             ServerPerformanceMonitor.ResumeEvent(ServerPerformanceMonitor.MonitorType.Landblock_Tick_RunActions);
             actionQueue.RunActions();
@@ -470,7 +563,15 @@ namespace ACE.Server.Entity
             }
             ServerPerformanceMonitor.PauseEvent(ServerPerformanceMonitor.MonitorType.Landblock_Tick_Database_Save);
 
+            Monitor5m.RegisterEventEnd();
             Monitor1h.RegisterEventEnd();
+            monitorsRequireEventStart = true;
+
+            if (DateTime.UtcNow - last5mClear >= last5mClearInteval)
+            {
+                Monitor5m.ClearEventHistory();
+                last5mClear = DateTime.UtcNow;
+            }
 
             if (DateTime.UtcNow - last1hClear >= last1hClearInteval)
             {
@@ -669,10 +770,16 @@ namespace ACE.Server.Entity
                 if (!success)
                 {
                     wo.CurrentLandblock = null;
+
                     if (wo.Generator != null)
-                        log.Debug($"AddWorldObjectInternal: couldn't spawn 0x{wo.Guid}:{wo.Name} from generator {wo.Generator.WeenieClassId} - 0x{wo.Generator.Guid}:{wo.Generator.Name}");
-                    else
-                        log.Warn($"AddWorldObjectInternal: couldn't spawn 0x{wo.Guid}:{wo.Name}");
+                    {
+                        log.Debug($"AddWorldObjectInternal: couldn't spawn 0x{wo.Guid}:{wo.Name} [{wo.WeenieClassId} - {wo.WeenieType}] from generator {wo.Generator.WeenieClassId} - 0x{wo.Generator.Guid}:{wo.Generator.Name}");
+                        wo.NotifyOfEvent(RegenerationType.PickUp); // Notify generator the generated object is effectively destroyed, use Pickup to catch both cases.
+                    }
+
+                    else if (wo.ProjectileTarget == null)
+                        log.Warn($"AddWorldObjectInternal: couldn't spawn 0x{wo.Guid}:{wo.Name} [{wo.WeenieClassId} - {wo.WeenieType}]");
+
                     return false;
                 }
             }
@@ -685,12 +792,15 @@ namespace ACE.Server.Entity
             // broadcast to nearby players
             wo.NotifyPlayers();
 
+            if (wo is Player player)
+                player.SetFogColor(FogColor);
+
             return true;
         }
 
-        public void RemoveWorldObject(ObjectGuid objectId, bool adjacencyMove = false, bool fromPickup = false)
+        public void RemoveWorldObject(ObjectGuid objectId, bool adjacencyMove = false, bool fromPickup = false, bool showError = true)
         {
-            RemoveWorldObjectInternal(objectId, adjacencyMove, fromPickup);
+            RemoveWorldObjectInternal(objectId, adjacencyMove, fromPickup, showError);
         }
 
         /// <summary>
@@ -703,13 +813,14 @@ namespace ACE.Server.Entity
             RemoveWorldObjectInternal(objectId, adjacencyMove);
         }
 
-        private void RemoveWorldObjectInternal(ObjectGuid objectId, bool adjacencyMove = false, bool fromPickup = false)
+        private void RemoveWorldObjectInternal(ObjectGuid objectId, bool adjacencyMove = false, bool fromPickup = false, bool showError = true)
         {
             if (worldObjects.TryGetValue(objectId, out var wo))
                 pendingRemovals.Add(objectId);
             else if (!pendingAdditions.Remove(objectId, out wo))
             {
-                log.Warn($"RemoveWorldObjectInternal: Couldn't find {objectId.Full:X8}");
+                if (showError)
+                    log.Warn($"RemoveWorldObjectInternal: Couldn't find {objectId.Full:X8}");
                 return;
             }
 
@@ -848,7 +959,7 @@ namespace ACE.Server.Entity
             lastActiveTime = DateTime.UtcNow;
             IsDormant = false;
 
-            if (isAdjacent || _landblock == null || _landblock.IsDungeon) return;
+            if (isAdjacent || PhysicsLandblock == null || PhysicsLandblock.IsDungeon) return;
 
             // for outdoor landblocks, recursively call 1 iteration to set adjacents to active
             foreach (var landblock in Adjacents)
@@ -990,5 +1101,63 @@ namespace ACE.Server.Entity
         }
 
         public List<House> Houses = new List<House>();
+
+        public void SetFogColor(EnvironChangeType environChangeType)
+        {
+            if (environChangeType.IsFog())
+            {
+                FogColor = environChangeType;
+
+                foreach (var lb in Adjacents)
+                    lb.FogColor = environChangeType;
+
+                foreach(var player in players)
+                {
+                    player.SetFogColor(FogColor);
+                }
+            }
+        }
+
+        public void SendEnvironSound(EnvironChangeType environChangeType)
+        {
+            if (environChangeType.IsSound())
+            {
+                SendEnvironChange(environChangeType);
+
+                foreach (var lb in Adjacents)
+                    lb.SendEnvironChange(environChangeType);
+            }
+        }
+
+        public void SendEnvironChange(EnvironChangeType environChangeType)
+        {
+            foreach (var player in players)
+            {
+                player.SendEnvironChange(environChangeType);
+            }
+        }
+
+        public void SendCurrentEnviron()
+        {
+            foreach (var player in players)
+            {
+                if (FogColor.IsFog())
+                {
+                    player.SetFogColor(FogColor);
+                }
+                else
+                {
+                    player.SendEnvironChange(FogColor);
+                }
+            }
+        }
+
+        public void DoEnvironChange(EnvironChangeType environChangeType)
+        {
+            if (environChangeType.IsFog())
+                SetFogColor(environChangeType);
+            else
+                SendEnvironSound(environChangeType);
+        }
     }
 }

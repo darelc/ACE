@@ -57,21 +57,21 @@ namespace ACE.Server.WorldObjects
             if (!(activator is Player player))
                 return new ActivationResult(false);
 
-            if (!(House.HouseHooksVisible ?? true) && Item != null && (!(Item is Hooker || Item is Book)))
+            if (!(House.RootHouse.HouseHooksVisible ?? true) && Item != null && (!(Item is Hooker || Item is Book)))
             {
-                if (HouseOwner.HasValue && player.Guid.Full == HouseOwner.Value)
+                if (House.RootHouse.HouseOwner.HasValue && (player.Guid.Full == House.RootHouse.HouseOwner.Value || player.House != null && player.House.HouseOwner == House.RootHouse.HouseOwner))
                     return new ActivationResult(new GameEventWeenieErrorWithString(player.Session, WeenieErrorWithString.ItemUnusableOnHook_CanOpen, Name));
                 else
                     return new ActivationResult(new GameEventWeenieErrorWithString(player.Session, WeenieErrorWithString.ItemUnusableOnHook_CannotOpen, Name));
             }
 
-            if (!(House.HouseHooksVisible ?? true) && Item != null)
+            if (!(House.RootHouse.HouseHooksVisible ?? true) && Item != null)
             {
                 // redirect to item.CheckUseRequirements
                 return Item.CheckUseRequirements(activator);
             }
 
-            if (!HouseOwner.HasValue || (HouseOwner.HasValue && HouseOwner.Value == 0) || (HouseOwner.HasValue && HouseOwner.Value > 0 && player.Guid.Full != HouseOwner.Value)) // Only HouseOwners can open hooks to add/remove items
+            if (!House.RootHouse.HouseOwner.HasValue || House.RootHouse.HouseOwner == 0 || player.House == null || (player.Guid.Full != House.RootHouse.HouseOwner.Value && player.House != null && player.House.HouseOwner != House.RootHouse.HouseOwner)) // Only HouseOwners can open hooks to add/remove items
             {
                 if (Item == null)
                     return new ActivationResult(new GameEventWeenieError(player.Session, WeenieError.HookItemNotUsable_CannotOpen));
@@ -81,16 +81,17 @@ namespace ACE.Server.WorldObjects
                     return new ActivationResult(new GameEventWeenieError(player.Session, WeenieError.YouAreNotPermittedToUseThatHook));
             }
 
-            if (!(House.HouseHooksVisible ?? true) && Item == null && HouseOwner.HasValue && HouseOwner.Value > 0 && player.Guid.Full == HouseOwner.Value) // Only HouseOwners can open hooks to add/remove items, but hooks must be visible
+            if (!(House.RootHouse.HouseHooksVisible ?? true) && Item == null && House.RootHouse.HouseOwner > 0 && (player.Guid.Full == House.RootHouse.HouseOwner.Value || player.House != null && player.House.HouseOwner == House.RootHouse.HouseOwner)) // Only HouseOwners can open hooks to add/remove items, but hooks must be visible
             {
                 return new ActivationResult(new GameEventWeenieError(player.Session, WeenieError.HookItemNotUsable_CanOpen));
             }
+
             return new ActivationResult(true);
         }
 
         public override void ActOnUse(WorldObject wo)
         {
-            if (!(House.HouseHooksVisible ?? true) && Item != null)
+            if (!(House.RootHouse.HouseHooksVisible ?? true) && Item != null)
             {
                 if (wo is Player player)
                     player.LasUsedHookId = Guid;
@@ -106,10 +107,19 @@ namespace ACE.Server.WorldObjects
 
         protected override void OnInitialInventoryLoadCompleted()
         {
-            var hidden = Inventory.Count == 0 && !(House.HouseHooksVisible ?? true);
+            var hidden = !(House.RootHouse.HouseHooksVisible ?? true);
 
-            NoDraw = hidden;
-            UiHidden = hidden;
+            Ethereal = !HasItem;
+            if (!HasItem)
+            {
+                NoDraw = hidden;
+                UiHidden = hidden;
+            }
+            else
+            {
+                NoDraw = false;
+                UiHidden = false;
+            }
 
             if (Inventory.Count > 0)
                 OnAddItem();
@@ -132,6 +142,7 @@ namespace ACE.Server.WorldObjects
 
             NoDraw = false;
             UiHidden = false;
+            Ethereal = false;
 
             SetupTableId = item.SetupTableId;
             MotionTableId = item.MotionTableId;
@@ -147,7 +158,7 @@ namespace ACE.Server.WorldObjects
 
             item.EmoteManager.SetProxy(this);
 
-            // Here we explicilty save the hook to the database to prevent item loss.
+            // Here we explicitly save the hook to the database to prevent item loss.
             // If the player adds an item to the hook, and the server crashes before the hook has been saved, the item will be lost.
             SaveBiotaToDatabase();
 
@@ -179,12 +190,19 @@ namespace ACE.Server.WorldObjects
             ObjScale = hook.ObjScale;
             Name = hook.Name;
 
+            NoDraw = false;
+            UiHidden = false;
+            Ethereal = true;
+
             if (MotionTableId == 0)
                 CurrentMotionState = null;
 
             removedItem.EmoteManager.ClearProxy();
 
             EnqueueBroadcast(new GameMessageUpdateObject(this));
+
+            // Here we explicitly save the storage to the database to prevent property desync.
+            SaveBiotaToDatabase();
         }
 
         public override MotionCommand MotionPickup
@@ -205,6 +223,28 @@ namespace ACE.Server.WorldObjects
                     case ACE.Entity.Enum.HookType.Roof:
                         return MotionCommand.Pickup20;
                 }
+            }
+        }
+
+        public void UpdateHookVisibility()
+        {
+            if (!HasItem)
+            {
+                if (!(House.HouseHooksVisible ?? false))
+                {
+                    NoDraw = true;
+                    UiHidden = true;
+                    Ethereal = true;
+                }
+                else
+                {
+                    NoDraw = false;
+                    UiHidden = false;
+                    Ethereal = true;
+                }
+
+                EnqueueBroadcastPhysicsState();
+                EnqueueBroadcast(new GameMessagePublicUpdatePropertyBool(this, PropertyBool.UiHidden, UiHidden));
             }
         }
     }

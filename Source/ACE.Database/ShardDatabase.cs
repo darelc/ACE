@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 
 using log4net;
 
+using ACE.Common;
 using ACE.Common.Extensions;
 using ACE.Database.Entity;
 using ACE.Database.Models.Shard;
@@ -159,6 +160,7 @@ namespace ACE.Database
             BiotaPropertiesString               = 0x200000,
             BiotaPropertiesTextureMap           = 0x400000,
             HousePermission                     = 0x800000,
+            BiotaPropertiesAllegiance           = 0x1000000,
         }
 
         private static void SetBiotaPopulatedCollections(Biota biota)
@@ -189,6 +191,7 @@ namespace ACE.Database
             if (biota.BiotaPropertiesString != null && biota.BiotaPropertiesString.Count > 0) populatedCollectionFlags |= PopulatedCollectionFlags.BiotaPropertiesString;
             if (biota.BiotaPropertiesTextureMap != null && biota.BiotaPropertiesTextureMap.Count > 0) populatedCollectionFlags |= PopulatedCollectionFlags.BiotaPropertiesTextureMap;
             if (biota.HousePermission != null && biota.HousePermission.Count > 0) populatedCollectionFlags |= PopulatedCollectionFlags.HousePermission;
+            if (biota.BiotaPropertiesAllegiance != null && biota.BiotaPropertiesAllegiance.Count > 0) populatedCollectionFlags |= PopulatedCollectionFlags.BiotaPropertiesAllegiance;
 
             biota.PopulatedCollectionFlags = (uint)populatedCollectionFlags;
         }
@@ -231,6 +234,7 @@ namespace ACE.Database
             if (populatedCollectionFlags.HasFlag(PopulatedCollectionFlags.BiotaPropertiesString)) biota.BiotaPropertiesString = context.BiotaPropertiesString.Where(r => r.ObjectId == biota.Id).ToList();
             if (populatedCollectionFlags.HasFlag(PopulatedCollectionFlags.BiotaPropertiesTextureMap)) biota.BiotaPropertiesTextureMap = context.BiotaPropertiesTextureMap.Where(r => r.ObjectId == biota.Id).ToList();
             if (populatedCollectionFlags.HasFlag(PopulatedCollectionFlags.HousePermission)) biota.HousePermission = context.HousePermission.Where(r => r.HouseId == biota.Id).ToList();
+            if (populatedCollectionFlags.HasFlag(PopulatedCollectionFlags.BiotaPropertiesAllegiance)) biota.BiotaPropertiesAllegiance = context.BiotaPropertiesAllegiance.Where(r => r.AllegianceId == biota.Id).ToList();
 
             return biota;
         }
@@ -366,7 +370,7 @@ namespace ACE.Database
         {
             var result = true;
 
-            Parallel.ForEach(biotas, biota =>
+            Parallel.ForEach(biotas, ThreadConfiguration.DatabaseParallelOptions, biota =>
             {
                 if (!SaveBiota(biota.biota, biota.rwLock))
                     result = false;
@@ -429,7 +433,7 @@ namespace ACE.Database
         {
             var result = true;
 
-            Parallel.ForEach(biotas, biota =>
+            Parallel.ForEach(biotas, ThreadConfiguration.DatabaseParallelOptions, biota =>
             {
                 if (!RemoveBiota(biota.biota, biota.rwLock))
                     result = false;
@@ -475,7 +479,7 @@ namespace ACE.Database
                     .Where(r => r.Type == (ushort)PropertyInstanceId.Container && r.Value == parentId)
                     .ToList();
 
-                Parallel.ForEach(results, result =>
+                Parallel.ForEach(results, ThreadConfiguration.DatabaseParallelOptions, result =>
                 {
                     var biota = GetBiota(result.ObjectId);
 
@@ -509,7 +513,7 @@ namespace ACE.Database
                     .Where(r => r.Type == (ushort)PropertyInstanceId.Wielder && r.Value == parentId)
                     .ToList();
 
-                Parallel.ForEach(results, result =>
+                Parallel.ForEach(results, ThreadConfiguration.DatabaseParallelOptions, result =>
                 {
                     var biota = GetBiota(result.ObjectId);
 
@@ -561,7 +565,7 @@ namespace ACE.Database
 
                 var results = context.Biota.Where(b => b.Id >= min && b.Id <= max).ToList();
 
-                Parallel.ForEach(results, result =>
+                Parallel.ForEach(results, ThreadConfiguration.DatabaseParallelOptions, result =>
                 {
                     var biota = GetBiota(result.Id);
                     staticObjects.Add(biota);
@@ -620,7 +624,7 @@ namespace ACE.Database
                     .Where(p => p.PositionType == 1 && p.ObjCellId >= min && p.ObjCellId <= max && p.ObjectId >= 0x80000000)
                     .ToList();
 
-                Parallel.ForEach(results, result =>
+                Parallel.ForEach(results, ThreadConfiguration.DatabaseParallelOptions, result =>
                 {
                     var biota = GetBiota(result.ObjectId);
 

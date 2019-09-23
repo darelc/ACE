@@ -233,7 +233,7 @@ namespace ACE.Server.WorldObjects
         {
             WorldObject weapon = GetWeapon(wielder as Player);
 
-            if (weapon == null)
+            if (wielder == null || weapon == null)
                 return defaultMagicCritFrequency;
 
             var critRateMod = (float)(weapon.GetProperty(PropertyFloat.CriticalFrequency) ?? defaultMagicCritFrequency);
@@ -266,7 +266,7 @@ namespace ACE.Server.WorldObjects
         {
             WorldObject weapon = GetWeapon(wielder as Player);
 
-            if (weapon == null)
+            if (wielder == null || weapon == null)
                 return defaultCritMultiplier;
 
             var critDamageMod = (float)(weapon.GetProperty(PropertyFloat.CriticalMultiplier) ?? defaultCritMultiplier);
@@ -301,7 +301,7 @@ namespace ACE.Server.WorldObjects
 
             WorldObject weapon = GetWeapon(wielder as Player);
 
-            if (weapon == null)
+            if (wielder == null || weapon == null)
                 return modifier;
 
             if (weapon.GetProperty(PropertyInt.SlayerCreatureType) != null && target != null)
@@ -323,7 +323,7 @@ namespace ACE.Server.WorldObjects
         {
             var weapon = GetWeapon(wielder as Player);
 
-            if (!(weapon is Caster) || weapon.W_DamageType != damageType)
+            if (wielder == null || !(weapon is Caster) || weapon.W_DamageType != damageType)
                 return 1.0f;
 
             var elementalDamageMod = weapon.ElementalDamageMod ?? 1.0f;
@@ -376,7 +376,7 @@ namespace ACE.Server.WorldObjects
 
             WorldObject weapon = GetWeapon(wielder as Player);
 
-            if (weapon == null)
+            if (wielder == null || weapon == null)
                 return defaultBonusModifier;
 
             var weaponResistanceModifierType = weapon.GetProperty(PropertyInt.ResistanceModifierType) ?? (int)DamageType.Undef;
@@ -736,7 +736,7 @@ namespace ACE.Server.WorldObjects
             }
         }
 
-        private static readonly float ThrustThreshold = 0.25f;
+        public static readonly float ThrustThreshold = 0.25f;
 
         public AttackType GetAttackType(MotionStance stance, float powerLevel, bool offhand)
         {
@@ -744,6 +744,12 @@ namespace ACE.Server.WorldObjects
                 return GetOffhandAttackType(stance, powerLevel);
 
             var attackType = W_AttackType;
+
+            if ((attackType & AttackType.Offhand) != 0)
+            {
+                log.Warn($"{Name} ({Guid}, {WeenieClassId}).GetAttackType(): {attackType}");
+                attackType &= ~AttackType.Offhand;
+            }
 
             if (stance == MotionStance.DualWieldCombat)
             {
@@ -761,6 +767,14 @@ namespace ACE.Server.WorldObjects
                     else
                         attackType = AttackType.DoubleThrust;
                 }
+                // stiletto
+                else if (attackType.HasFlag(AttackType.DoubleThrust))
+                {
+                    if (powerLevel >= ThrustThreshold)
+                        attackType = AttackType.DoubleThrust;
+                    else
+                        attackType = AttackType.Thrust;
+                }
             }
             else if (stance == MotionStance.SwordShieldCombat)
             {
@@ -772,7 +786,7 @@ namespace ACE.Server.WorldObjects
                     else
                         attackType = AttackType.Thrust;
                 }
-                else if (attackType.HasFlag(AttackType.DoubleThrust | AttackType.DoubleSlash))
+                else if ((attackType & (AttackType.DoubleThrust | AttackType.DoubleSlash)) != 0)
                 {
                     if (powerLevel >= ThrustThreshold)
                         attackType = AttackType.DoubleThrust;
@@ -797,6 +811,10 @@ namespace ACE.Server.WorldObjects
                     else
                         attackType = AttackType.Thrust;
                 }
+
+                // stiletto only has double thrust?
+                else if (attackType.HasFlag(AttackType.DoubleThrust))
+                    attackType = AttackType.Thrust;
             }
             if (attackType.HasFlag(AttackType.Thrust | AttackType.Slash))
             {
@@ -812,6 +830,12 @@ namespace ACE.Server.WorldObjects
         {
             var attackType = W_AttackType;
 
+            if ((attackType & AttackType.Offhand) != 0)
+            {
+                log.Warn($"{Name} ({Guid}, {WeenieClassId}).GetOffhandAttackType(): {attackType}");
+                attackType &= ~AttackType.Offhand;
+            }
+
             if (attackType.HasFlag(AttackType.TripleThrust | AttackType.TripleSlash))
             {
                 if (powerLevel >= ThrustThreshold)
@@ -825,6 +849,14 @@ namespace ACE.Server.WorldObjects
                     attackType = AttackType.OffhandDoubleSlash;
                 else
                     attackType = AttackType.OffhandDoubleThrust;
+            }
+            // stiletto
+            else if (attackType.HasFlag(AttackType.DoubleThrust))
+            {
+                if (powerLevel >= ThrustThreshold)
+                    attackType = AttackType.OffhandDoubleThrust;
+                else
+                    attackType = AttackType.OffhandThrust;
             }
             else if (attackType.HasFlag(AttackType.Thrust | AttackType.Slash))
             {

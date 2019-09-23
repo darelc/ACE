@@ -464,14 +464,34 @@ namespace ACE.Server.WorldObjects
         {
             switch (GeneratorTimeType)
             {
-                // TODO: defined/night/day
+                // TODO: defined
                 case GeneratorTimeType.RealTime:
                     CheckRealTimeStatus();
                     break;
                 case GeneratorTimeType.Event:
                     CheckEventStatus();
                     break;
+                case GeneratorTimeType.Night:
+                case GeneratorTimeType.Day:
+                    CheckTimeOfDayStatus();
+                    break;
             }            
+        }
+
+        /// <summary>
+        /// Enables/disables a generator based on in-game time of day, Day or Night
+        /// </summary>
+        public void CheckTimeOfDayStatus()
+        {
+            var prevDisabled = GeneratorDisabled;
+           
+            var isDay = Timers.CurrentInGameTime.IsDay;
+            var isDayGenerator = GeneratorTimeType == GeneratorTimeType.Day;
+
+            //GeneratorDisabled = isDay != isDayGenerator;
+            //HandleStatus(prevDisabled);
+
+            HandleStatusStaged(prevDisabled, isDay, isDayGenerator);
         }
 
         /// <summary>
@@ -543,6 +563,10 @@ namespace ACE.Server.WorldObjects
                     break;
                 case GeneratorTimeType.Event:
                     change = !cond1 || !cond2;
+                    break;
+                case GeneratorTimeType.Day:
+                case GeneratorTimeType.Night:
+                    change = cond1 != cond2;
                     break;
             }
 
@@ -629,7 +653,7 @@ namespace ACE.Server.WorldObjects
                             var wo = rNode.TryGetWorldObject();
 
                             if (wo is Creature creature && !creature.IsDead)
-                                creature.Smite(this);
+                                creature.Smite(this, true);
                         }
 
                         generator.Spawned.Clear();
