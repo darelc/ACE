@@ -110,10 +110,19 @@ namespace ACE.Server.Managers
             private uint current;
             private readonly string name;
 
-            private static readonly TimeSpan recycleTime = TimeSpan.FromMinutes(120);
+            private static readonly TimeSpan recycleTime = TimeSpan.FromMinutes(360);
 
             private readonly Queue<Tuple<DateTime, uint>> recycledGuids = new Queue<Tuple<DateTime, uint>>();
 
+            /// <summary>
+            /// The value here is the result of two factors:
+            /// - A: The total number of GUIDs that are generated during a period of recycledTime (defined above)
+            /// - B: The total number of GUIDs that are consumed and saved to the shard between server resets
+            /// A safe value might be (2 * A) + (2 * B)
+            /// On a shard with severe id fragmentation, this can end up eating more memory to store all the smaller gaps
+            /// Once sequence gaps are depleted and there are no available id's in the recycle queue, DB Max + 1 is used
+            /// You can monitor the amount of available id's using /serverstatus
+            /// </summary>
             private const int limitAvailableIDsReturnedInGetSequenceGaps = 10000000;
             private bool useSequenceGapExhaustedMessageDisplayed;
             private LinkedList<(uint start, uint end)> availableIDs = new LinkedList<(uint start, uint end)>();
@@ -327,7 +336,7 @@ namespace ACE.Server.Managers
             var dynamicGuidCurrent = dynamicAlloc.Current();
             var dynamicDebugInfo = dynamicAlloc.GetRecycleDebugInfo();
 
-            string message = $"The next Player GUID to be allocated is expected to be: (0x{playerGuidCurrent:X})\n";
+            string message = $"The next Player GUID to be allocated is expected to be: 0x{playerGuidCurrent:X}\n";
 
             if (dynamicDebugInfo.nextRecycleTime == DateTime.MinValue)
                 message += $"After {dynamicDebugInfo.totalSequenceGapGuids:N0} sequence gap ids have been consumed, and {dynamicDebugInfo.totalPendingRecycledGuids:N0} recycled ids have been consumed, the next id will be {dynamicGuidCurrent:X8}";
@@ -336,9 +345,9 @@ namespace ACE.Server.Managers
                 var nextDynamicIsAvailIn = dynamicDebugInfo.nextRecycleTime - DateTime.UtcNow;
 
                 if (nextDynamicIsAvailIn.TotalSeconds <= 0)
-                    message += $"After {dynamicDebugInfo.totalSequenceGapGuids:N0} sequence gap ids have been consumed, and {dynamicDebugInfo.totalPendingRecycledGuids:N0} recycled ids have been consumed, the next of which are available now, the next id will be {dynamicGuidCurrent:X8}";
+                    message += $"After {dynamicDebugInfo.totalSequenceGapGuids:N0} sequence gap ids have been consumed, and {dynamicDebugInfo.totalPendingRecycledGuids:N0} recycled ids have been consumed, the next of which are available now, the next id will be: 0x{dynamicGuidCurrent:X8}";
                 else
-                    message += $"After {dynamicDebugInfo.totalSequenceGapGuids:N0} sequence gap ids have been consumed, and {dynamicDebugInfo.totalPendingRecycledGuids:N0} recycled ids have been consumed, the next of which is available in {nextDynamicIsAvailIn.TotalMinutes:N1} m, the next id will be {dynamicGuidCurrent:X8}";
+                    message += $"After {dynamicDebugInfo.totalSequenceGapGuids:N0} sequence gap ids have been consumed, and {dynamicDebugInfo.totalPendingRecycledGuids:N0} recycled ids have been consumed, the next of which is available in {nextDynamicIsAvailIn.TotalMinutes:N1} m, the next id will be: 0x{dynamicGuidCurrent:X8}";
             }
 
             return message;
