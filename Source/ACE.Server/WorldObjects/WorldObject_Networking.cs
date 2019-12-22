@@ -376,10 +376,10 @@ namespace ACE.Server.WorldObjects
             }
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.DefaultScript) != 0)
-                writer.Write(Convert.ToUInt32(PhysicsObj?.DefaultScript ?? 0u));
+                writer.Write(DefaultScriptId ?? 0);
 
             if ((physicsDescriptionFlag & PhysicsDescriptionFlag.DefaultScriptIntensity) != 0)
-                writer.Write(PhysicsObj?.DefaultScriptIntensity ?? 0f);
+                writer.Write(DefaultScriptIntensity ?? 0f);
 
             // timestamps
             writer.Write(Sequences.GetCurrentSequence(SequenceType.ObjectPosition));        // 0
@@ -395,12 +395,18 @@ namespace ACE.Server.WorldObjects
             writer.Align();
         }
 
+        public DateTime LastUpdatePosition;
+
         /// <summary>
         /// Broadcast position updates to players within range
         /// </summary>
-        protected void SendUpdatePosition()
+        public void SendUpdatePosition()
         {
+            //Console.WriteLine($"{Name}.SendUpdatePosition({Location.ToLOCString()})");
+
             EnqueueBroadcast(new GameMessageUpdatePosition(this));
+
+            LastUpdatePosition = DateTime.UtcNow;
         }
 
         public virtual void SendPartialUpdates(Session targetSession, List<GenericPropertyId> properties)
@@ -478,10 +484,10 @@ namespace ACE.Server.WorldObjects
             if (Omega != null)
                 physicsDescriptionFlag |= PhysicsDescriptionFlag.Omega;
 
-            if (PhysicsObj?.DefaultScript != null)
+            if (DefaultScriptId != null)
                 physicsDescriptionFlag |= PhysicsDescriptionFlag.DefaultScript;
 
-            if (PhysicsObj?.DefaultScriptIntensity != null)
+            if (DefaultScriptIntensity != null)
                 physicsDescriptionFlag |= PhysicsDescriptionFlag.DefaultScriptIntensity;
 
             return physicsDescriptionFlag;
@@ -853,18 +859,6 @@ namespace ACE.Server.WorldObjects
                 ObjectDescriptionFlags &= ~flag;
         }
 
-        public void ClearRequestedPositions()
-        {
-            ForcedLocation = null;
-            RequestedLocation = null;
-        }
-
-        public void ClearPreviousLocation()
-        {
-            PreviousLocation = null;
-        }
-
-
         public bool? IgnoreCloIcons
         {
             get => GetProperty(PropertyBool.IgnoreCloIcons);
@@ -1054,6 +1048,19 @@ namespace ACE.Server.WorldObjects
                 iterator = CurrentLandblock.GetObject(iterator.OwnerId.Value);
             }
             return iterator.CurrentLandblock == null ? null : iterator;
+        }
+
+        public float EnqueueMotionMagic(ActionChain actionChain, MotionCommand motionCommand, float speed = 1.0f)
+        {
+            var motion = new Motion(MotionStance.Magic, motionCommand, speed);
+            motion.MotionState.TurnSpeed = 2.25f;  // ??
+
+            var animLength = Physics.Animation.MotionTable.GetAnimationLength(MotionTableId, MotionStance.Magic, motionCommand, speed);
+
+            actionChain.AddAction(this, () => EnqueueBroadcastMotion(motion));
+            actionChain.AddDelaySeconds(animLength);
+
+            return animLength;
         }
 
         public float EnqueueMotion(ActionChain actionChain, MotionCommand motionCommand, float speed = 1.0f, bool useStance = true, bool usePrevCommand = false)

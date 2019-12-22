@@ -34,7 +34,7 @@ namespace ACE.Server.WorldObjects
             lastCompletedMove = moveToChainCounter;
         }
 
-        public void CreateMoveToChain(WorldObject target, Action<bool> callback, float? useRadius = null)
+        public void CreateMoveToChain(WorldObject target, Action<bool> callback, float? useRadius = null, bool rotate = true)
         {
             var thisMoveToChainNumber = GetNextMoveToChainNumber();
 
@@ -59,16 +59,24 @@ namespace ACE.Server.WorldObjects
             var withinUseRadius = CurrentLandblock.WithinUseRadius(this, target.Guid, out var targetValid, useRadius);
             if (withinUseRadius)
             {
-                // send TurnTo motion
-                var rotateTime = Rotate(target);
-                var actionChain = new ActionChain();
-                actionChain.AddDelaySeconds(rotateTime);
-                actionChain.AddAction(this, () =>
+                if (rotate)
+                {
+                    // send TurnTo motion
+                    var rotateTime = Rotate(target);
+                    var actionChain = new ActionChain();
+                    actionChain.AddDelaySeconds(rotateTime);
+                    actionChain.AddAction(this, () =>
+                    {
+                        lastCompletedMove = thisMoveToChainNumber;
+                        callback(true);
+                    });
+                    actionChain.EnqueueChain();
+                }
+                else
                 {
                     lastCompletedMove = thisMoveToChainNumber;
                     callback(true);
-                });
-                actionChain.EnqueueChain();
+                }
                 return;
             }
 
@@ -139,8 +147,6 @@ namespace ACE.Server.WorldObjects
 
         public Position StartJump;
 
-        public bool InitMoveListener;
-
         public override void MoveTo(WorldObject target, float runRate = 0.0f)
         {
             if (runRate == 0.0f)
@@ -163,12 +169,6 @@ namespace ACE.Server.WorldObjects
             PhysicsObj.MoveToObject(target.PhysicsObj, mvp);
 
             IsMoving = true;
-
-            if (!InitMoveListener)
-            {
-                PhysicsObj.add_moveto_listener(OnMoveComplete);
-                InitMoveListener = true;
-            }
 
             MoveTo_Tick();
         }
@@ -195,8 +195,14 @@ namespace ACE.Server.WorldObjects
 
         public override void OnMoveComplete(WeenieError status)
         {
-            //Console.WriteLine($"{Name}.OnMoveComplete()");
+            //Console.WriteLine($"{Name}.OnMoveComplete({status})");
             IsMoving = false;
+
+            if (IsPlayerMovingTo)
+            {
+                //OnMoveComplete_MoveTo(status);
+                return;
+            }
 
             switch (status)
             {
@@ -208,6 +214,20 @@ namespace ACE.Server.WorldObjects
                     HandleActionCancelAttack();
                     break;
             }
+        }
+
+        public void OnMoveComplete_MoveTo(WeenieError status)
+        {
+            //Console.WriteLine($"{Name}.OnMoveComplete_MoveTo({status})");
+
+            /*IsPlayerMovingTo = false;
+
+            var success = status == WeenieError.None;
+
+            if (MoveToCallback != null)
+                MoveToCallback(success);
+
+            MoveToCallback = null;*/
         }
 
         public MovementParameters GetChargeParameters()
@@ -227,8 +247,11 @@ namespace ACE.Server.WorldObjects
         public void HandleFallingDamage(EnvCollisionProfile collision)
         {
             // starting with phat logic
-            var jumpVelocity = 0.0f;
-            PhysicsObj.WeenieObj.InqJumpVelocity(1.0f, ref jumpVelocity);
+
+            // jumping skill sort of used as a damping factor here
+            //var jumpVelocity = 0.0f;
+            //PhysicsObj.WeenieObj.InqJumpVelocity(1.0f, out jumpVelocity);
+            var jumpVelocity = 11.25434f;   // TODO: figure out how to scale this better
 
             var cachedVelocity = PhysicsObj.CachedVelocity;
 
@@ -243,7 +266,8 @@ namespace ACE.Server.WorldObjects
 
             if (ratio > 0.0f)
             {
-                var damage = ratio * 40.0f;
+                //var damage = ratio * 40.0f;
+                var damage = ratio * 87.293810f;
                 //Console.WriteLine($"Damage: {damage}");
 
                 // bludgeon damage
@@ -278,7 +302,7 @@ namespace ACE.Server.WorldObjects
 
             if (Health.Current <= 0)
             {
-                OnDeath(this, DamageType.Bludgeon, false);
+                OnDeath(new DamageHistoryInfo(this), DamageType.Bludgeon, false);
                 Die();
             }
             else
