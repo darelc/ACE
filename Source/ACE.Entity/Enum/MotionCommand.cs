@@ -494,5 +494,79 @@ namespace ACE.Entity.Enum
                     return MotionCommand.Invalid;
             }
         }
+
+        public static bool IsSubsequent(this MotionCommand motionCommand)
+        {
+            return motionCommand >= MotionCommand.AttackHigh2 && motionCommand <= MotionCommand.AttackLow3 ||
+                   motionCommand >= MotionCommand.AttackHigh4 && motionCommand <= MotionCommand.AttackLow6;
+        }
+
+        public static MotionCommand ReduceSubsequent(this MotionCommand motionCommand)
+        {
+            if (!motionCommand.IsSubsequent())
+                return MotionCommand.Invalid;
+
+            switch (motionCommand)
+            {
+                case MotionCommand.AttackLow2:
+                case MotionCommand.AttackLow3:
+                case MotionCommand.AttackLow4:
+                case MotionCommand.AttackLow5:
+                case MotionCommand.AttackLow6:
+                    return MotionCommand.AttackLow1;
+
+                case MotionCommand.AttackMed2:
+                case MotionCommand.AttackMed3:
+                case MotionCommand.AttackMed4:
+                case MotionCommand.AttackMed5:
+                case MotionCommand.AttackMed6:
+                    return MotionCommand.AttackMed1;
+
+                case MotionCommand.AttackHigh2:
+                case MotionCommand.AttackHigh3:
+                case MotionCommand.AttackHigh4:
+                case MotionCommand.AttackHigh5:
+                case MotionCommand.AttackHigh6:
+                    return MotionCommand.AttackHigh1;
+
+                default:
+                    return MotionCommand.Invalid;
+            }
+        }
+
+        public static float GetAimAngle(this MotionCommand motion)
+        {
+            switch (motion)
+            {
+                default:
+                    return 0.0f;
+
+                case MotionCommand.AimHigh15:
+                    return 15.0f;
+                case MotionCommand.AimHigh30:
+                    return 30.0f;
+                case MotionCommand.AimHigh45:
+                    return 45.0f;
+                case MotionCommand.AimHigh60:
+                    return 60.0f;
+                case MotionCommand.AimHigh75:
+                    return 75.0f;
+                case MotionCommand.AimHigh90:
+                    return 90.0f;
+
+                case MotionCommand.AimLow15:
+                    return -15.0f;
+                case MotionCommand.AimLow30:
+                    return -30.0f;
+                case MotionCommand.AimLow45:
+                    return -45.0f;
+                case MotionCommand.AimLow60:
+                    return -60.0f;
+                case MotionCommand.AimLow75:
+                    return -75.0f;
+                case MotionCommand.AimLow90:
+                    return -90.0f;
+            }
+        }
     }
 }

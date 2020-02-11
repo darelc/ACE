@@ -195,7 +195,7 @@ namespace ACE.Server.WorldObjects
         {
             // for house dungeons, link to outdoor house properties
             var house = this;
-            if (CurrentLandblock != null && CurrentLandblock.IsDungeon && HouseType != HouseType.Apartment)
+            if (CurrentLandblock != null && CurrentLandblock.HasDungeon && HouseType != HouseType.Apartment)
             {
                 var biota = DatabaseManager.Shard.GetBiotasByWcid(WeenieClassId).Where(bio => bio.BiotaPropertiesPosition.Count > 0).FirstOrDefault(b => b.BiotaPropertiesPosition.FirstOrDefault(p => p.PositionType == (ushort)PositionType.Location).ObjCellId >> 16 != Location.Landblock);
                 if (biota != null)
@@ -313,15 +313,30 @@ namespace ACE.Server.WorldObjects
 
             var housePermissions = Biota.GetHousePermission(BiotaDatabaseLock);
 
+            var deleted = new List<uint>();
+
             foreach (var housePermission in Biota.HousePermission)
             {
                 var player = PlayerManager.FindByGuid(housePermission.PlayerGuid);
                 if (player == null)
                 {
                     Console.WriteLine($"{Name}.BuildGuests(): couldn't find guest {housePermission.PlayerGuid:X8}");
+
+                    // character has been deleted -- automatically remove?
+                    deleted.Add(housePermission.PlayerGuid);
                     continue;
                 }
                 Guests.Add(player.Guid, housePermission.Storage);
+            }
+
+            if (deleted.Count > 0)
+            {
+                foreach (var guid in deleted)
+                    Biota.TryRemoveHousePermission(guid, out var entity, BiotaDatabaseLock);
+
+                ChangesDetected = true;
+
+                SaveBiotaToDatabase();
             }
         }
 
@@ -511,7 +526,7 @@ namespace ACE.Server.WorldObjects
                 // and the outdoor house landblock is still unloaded. the reference to the outdoor House will be a shallow reference at that point,
                 // and this should only happen for outdoor landblocks
 
-                if (CurrentLandblock == null || !CurrentLandblock.IsDungeon)
+                if (CurrentLandblock == null || !CurrentLandblock.HasDungeon)
                 {
                     _rootGuid = Guid;
                     return Guid;

@@ -281,12 +281,27 @@ namespace ACE.Server.Managers
         /// <summary>
         /// Returns the maximum # of solves for this quest
         /// </summary>
-        public int GetMaxSolves(string questName)
+        public int GetMaxSolves(string questFormat)
         {
+            var questName = GetQuestName(questFormat);
+
             var quest = DatabaseManager.World.GetCachedQuest(questName);
             if (quest == null) return 0;
 
             return quest.MaxSolves;
+        }
+
+        /// <summary>
+        /// Returns the current # of solves for this quest
+        /// </summary>
+        public int GetCurrentSolves(string questFormat)
+        {
+            var questName = GetQuestName(questFormat);
+
+            var quest = GetQuest(questName);
+            if (quest == null) return 0;
+
+            return quest.NumTimesCompleted;
         }
 
         /// <summary>
@@ -419,7 +434,6 @@ namespace ACE.Server.Managers
                 Console.WriteLine("Quest Name: " + quest.QuestName);
                 Console.WriteLine("Times Completed: " + quest.NumTimesCompleted);
                 Console.WriteLine("Last Time Completed: " + quest.LastTimeCompleted);
-                Console.WriteLine("Quest ID: " + quest.Id.ToString("X8"));
                 Console.WriteLine("Player ID: " + quest.CharacterId.ToString("X8"));
                 Console.WriteLine("----");
             }
@@ -455,8 +469,8 @@ namespace ACE.Server.Managers
             var quest = GetQuest(questName);
             var numSolves = quest != null ? quest.NumTimesCompleted : 0;
 
-            int min = _min ?? 0;    // use defaults?
-            int max = _max ?? 0;
+            int min = _min ?? int.MinValue;    // use defaults?
+            int max = _max ?? int.MaxValue;
 
             var hasQuestSolves = numSolves >= min && numSolves <= max;    // verify: can either of these be -1?
             if (Debug)
@@ -474,14 +488,25 @@ namespace ACE.Server.Managers
 
             if (player == null) return;
 
-            if (wo is Portal)
+            var error = new GameEventInventoryServerSaveFailed(player.Session, wo.Guid.Full, WeenieError.ItemRequiresQuestToBePickedUp);
+            player.Session.Network.EnqueueSend(error);
+        }
+
+        public void HandlePortalQuestError(string questName)
+        {
+            var player = Creature as Player;
+
+            if (player == null) return;
+
+            if (!HasQuest(questName))
             {
                 player.Session.Network.EnqueueSend(new GameEventWeenieError(player.Session, WeenieError.YouMustCompleteQuestToUsePortal));
             }
-            else
+            else if (CanSolve(questName))
             {
-                var error = new GameEventInventoryServerSaveFailed(player.Session, wo.Guid.Full, WeenieError.ItemRequiresQuestToBePickedUp);
-                player.Session.Network.EnqueueSend(error);
+                var error = new GameEventWeenieError(player.Session, WeenieError.QuestSolvedTooLongAgo);
+                var text = new GameMessageSystemChat("You completed the quest this portal requires too long ago!", ChatMessageType.Magic); // This msg wasn't sent in retail PCAP, leading to a completely silent fail when using the portal with an expired flag.
+                player.Session.Network.EnqueueSend(text, error);
             }
         }
 
