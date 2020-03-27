@@ -100,9 +100,7 @@ namespace ACE.Server.WorldObjects
             proj.Location.Pos = origin;
             proj.Location.Rotation = orientation;
 
-            proj.Velocity = velocity;
-
-            SetProjectilePhysicsState(proj, target);
+            SetProjectilePhysicsState(proj, target, velocity);
 
             var success = LandblockManager.AddObject(proj);
 
@@ -111,6 +109,12 @@ namespace ACE.Server.WorldObjects
                 if (!proj.HitMsg && player != null)
                     player.Session.Network.EnqueueSend(new GameMessageSystemChat("Your missile attack hit the environment.", ChatMessageType.Broadcast));
 
+                return null;
+            }
+
+            if (!IsProjectileVisible(proj))
+            {
+                proj.OnCollideEnvironment();
                 return null;
             }
 
@@ -175,17 +179,16 @@ namespace ACE.Server.WorldObjects
                 return 0.0f;
             }
 
-            var setupId = weenie.WeeniePropertiesDID.FirstOrDefault(i => i.Type == (ushort)PropertyDataId.Setup);
-
-            if (setupId == null)
+            if (!weenie.PropertiesDID.TryGetValue(PropertyDataId.Setup, out var setupId))
             {
-                log.Error($"Creature_Missile.GetProjectileRadius(): couldn't find SetupId for {weenie.ClassId} - {weenie.ClassName}");
+                log.Error($"Creature_Missile.GetProjectileRadius(): couldn't find SetupId for {weenie.WeenieClassId} - {weenie.ClassName}");
                 return 0.0f;
             }
 
-            var setup = DatManager.PortalDat.ReadFromDat<SetupModel>(setupId.Value);
+            var setup = DatManager.PortalDat.ReadFromDat<SetupModel>(setupId);
 
-            var scale = weenie.WeeniePropertiesFloat.FirstOrDefault(i => i.Type == (ushort)PropertyFloat.DefaultScale)?.Value ?? 1.0f;
+            if (!weenie.PropertiesFloat.TryGetValue(PropertyFloat.DefaultScale, out var scale))
+                scale = 1.0f;
 
             return ProjectileRadiusCache[projectileWcid] = (float)(setup.Spheres[0].Radius * scale);
         }
@@ -288,7 +291,7 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Sets the physics state for a launched projectile
         /// </summary>
-        public void SetProjectilePhysicsState(WorldObject obj, WorldObject target)
+        public void SetProjectilePhysicsState(WorldObject obj, WorldObject target, Vector3 velocity)
         {
             obj.InitPhysicsObj();
 
@@ -306,9 +309,7 @@ namespace ACE.Server.WorldObjects
             obj.Placement = ACE.Entity.Enum.Placement.MissileFlight;
             obj.CurrentMotionState = null;
 
-            var velocity = obj.Velocity;
-
-            obj.PhysicsObj.Velocity = velocity.Value;
+            obj.PhysicsObj.Velocity = velocity;
             obj.PhysicsObj.ProjectileTarget = target.PhysicsObj;
 
             obj.PhysicsObj.set_active(true);

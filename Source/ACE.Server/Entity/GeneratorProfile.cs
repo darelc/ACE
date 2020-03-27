@@ -109,7 +109,9 @@ namespace ACE.Server.Entity
         {
             get
             {
-                if (Generator is Chest || Generator.RegenerationInterval == 0)
+                // TODO: investigate this logic - why is the RegenerationInterval bit needed here?
+
+                if (Generator is Chest || !(Generator is PressurePlate) && Generator.RegenerationInterval == 0)
                     return 0;
 
                 return Biota.Delay ?? Generator.GeneratorProfiles[0].Biota.Delay ?? 0.0f;
@@ -327,6 +329,7 @@ namespace ACE.Server.Entity
         {
             float genRadius = (float)(Generator.GetProperty(PropertyFloat.GeneratorRadius) ?? 0f);
             obj.Location = new ACE.Entity.Position(Generator.Location);
+            obj.Location.PositionZ += 0.05f;
 
             // we are going to delay this scatter logic until the physics engine,
             // where the remnants of this function are in the client (SetScatterPositionInternal)

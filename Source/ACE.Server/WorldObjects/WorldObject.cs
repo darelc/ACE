@@ -10,10 +10,10 @@ using ACE.Common;
 using ACE.Common.Extensions;
 using ACE.Database;
 using ACE.Database.Models.Shard;
-using ACE.Database.Models.World;
 using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
+using ACE.Entity.Models;
 using ACE.Server.Entity;
 using ACE.Server.Entity.Actions;
 using ACE.Server.Managers;
@@ -28,6 +28,7 @@ using ACE.Server.Physics.Common;
 using ACE.Server.Physics.Util;
 using ACE.Server.WorldObjects.Managers;
 
+using Biota = ACE.Database.Models.Shard.Biota;
 using Landblock = ACE.Server.Entity.Landblock;
 using Position = ACE.Entity.Position;
 
@@ -97,7 +98,8 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         protected WorldObject(Weenie weenie, ObjectGuid guid)
         {
-            Biota = weenie.CreateCopyAsBiota(guid.Full);
+            var newBiota = ACE.Entity.Adapter.WeenieConverter.ConvertToBiota(weenie, guid.Full);
+            Biota = ACE.Database.Adapter.BiotaConverter.ConvertFromEntityBiota(newBiota);
             Guid = guid;
 
             InitializePropertyDictionaries();
@@ -124,6 +126,8 @@ namespace ACE.Server.WorldObjects
             InitializeGenerator();
             InitializeHeartbeats();
         }
+
+        public bool BumpVelocity { get; set; }
 
         /// <summary>
         /// Initializes a new default physics object
@@ -167,6 +171,9 @@ namespace ACE.Server.WorldObjects
             PhysicsObj.State = defaultState;
 
             //if (creature != null) AllowEdgeSlide = true;
+
+            if (BumpVelocity)
+                PhysicsObj.Velocity = new Vector3(0, 0, 0.5f);
         }
 
         public bool AddPhysicsObj()
@@ -406,6 +413,57 @@ namespace ACE.Server.WorldObjects
             return isVisible;
         }
 
+        public bool IsMeleeVisible(WorldObject wo)
+        {
+            if (PhysicsObj == null || wo.PhysicsObj == null)
+                return false;
+
+            var startPos = new Physics.Common.Position(PhysicsObj.Position);
+            var targetPos = new Physics.Common.Position(wo.PhysicsObj.Position);
+
+            PhysicsObj.ProjectileTarget = wo.PhysicsObj;
+
+            // perform line of sight test
+            var transition = PhysicsObj.transition(startPos, targetPos, false);
+
+            PhysicsObj.ProjectileTarget = null;
+
+            if (transition == null) return false;
+
+            // check if target object was reached
+            var isVisible = transition.CollisionInfo.CollideObject.FirstOrDefault(c => c.ID == wo.PhysicsObj.ID) != null;
+            return isVisible;
+        }
+
+        public bool IsProjectileVisible(WorldObject proj)
+        {
+            if (!(this is Creature) || (Ethereal ?? false))
+                return true;
+
+            if (PhysicsObj == null || proj.PhysicsObj == null)
+                return false;
+
+            var startPos = new Physics.Common.Position(proj.PhysicsObj.Position);
+            var targetPos = new Physics.Common.Position(PhysicsObj.Position);
+
+            // set to eye level
+            targetPos.Frame.Origin.Z += PhysicsObj.GetHeight() - proj.PhysicsObj.GetHeight();
+
+            var prevTarget = proj.PhysicsObj.ProjectileTarget;
+            proj.PhysicsObj.ProjectileTarget = PhysicsObj;
+
+            // perform line of sight test
+            var transition = proj.PhysicsObj.transition(startPos, targetPos, false);
+
+            proj.PhysicsObj.ProjectileTarget = prevTarget;
+
+            if (transition == null) return false;
+
+            // check if target object was reached
+            var isVisible = transition.CollisionInfo.CollideObject.FirstOrDefault(c => c.ID == PhysicsObj.ID) != null;
+            return isVisible;
+        }
+
 
 
         // ******************************************************************* OLD CODE BELOW ********************************
@@ -590,7 +648,7 @@ namespace ACE.Server.WorldObjects
             float healthPercentage = 1f;
 
             if (this is Creature creature)
-                healthPercentage = (float)creature.Health.Current / (float)creature.Health.MaxValue;
+                healthPercentage = (float)creature.Health.Current / creature.Health.MaxValue;
 
             var updateHealth = new GameEventUpdateHealth(examiner, Guid.Full, healthPercentage);
             examiner.Network.EnqueueSend(updateHealth);
@@ -834,11 +892,8 @@ namespace ACE.Server.WorldObjects
                     item.Destroy();
             }
 
-            if (this is CombatPet combatPet)
-            {
-                if (combatPet.P_PetOwner != null && combatPet.P_PetOwner.CurrentActiveCombatPet == this)
-                    combatPet.P_PetOwner.CurrentActiveCombatPet = null;
-            }
+            if (this is Pet pet && pet.P_PetOwner?.CurrentActivePet == this)
+                pet.P_PetOwner.CurrentActivePet = null;
 
             if (raiseNotifyOfDestructionEvent)
                 NotifyOfEvent(RegenerationType.Destruction);
@@ -870,11 +925,6 @@ namespace ACE.Server.WorldObjects
 
             return pluralName;
         }
-
-        /// <summary>
-        /// Returns TRUE if this object has a non-zero velocity
-        /// </summary>
-        public bool IsMoving { get => PhysicsObj != null && (PhysicsObj.Velocity.X != 0 || PhysicsObj.Velocity.Y != 0 || PhysicsObj.Velocity.Z != 0); }
 
         /// <summary>
         /// Returns TRUE if this object has non-cyclic animations in progress
@@ -1031,14 +1081,6 @@ namespace ACE.Server.WorldObjects
                 return new List<WorldObject>();
             else
                 return new List<WorldObject>() { this };
-        }
-
-        /// <summary>
-        /// Returns the wielder or the current object
-        /// </summary>
-        public WorldObject GetCurrentOrWielder(Landblock landblock)
-        {
-            return WielderId != null ? landblock?.GetObject(WielderId.Value) : this;
         }
     }
 }

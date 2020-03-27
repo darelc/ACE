@@ -16,7 +16,7 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// ObjectId of the currently selected Target (only players and creatures)
         /// </summary>
-        private ObjectGuid selectedTarget = ObjectGuid.Invalid;
+        private WorldObjectInfo selectedTarget { get; set; }
 
         /// <summary>
         /// This dictionary is used to keep track of the last use of any item that implemented shared cooldown.
@@ -55,10 +55,10 @@ namespace ACE.Server.WorldObjects
                 return;
 
             // If Visibility is true, do not send object to client, object is meant for server side only, unless Adminvision is true.
-            if (!worldObject.Visibility)
-                Session.Network.EnqueueSend(new GameMessageCreateObject(worldObject, Adminvision, Adminvision));
-            else if (worldObject.Visibility && Adminvision)
-                Session.Network.EnqueueSend(new GameMessageCreateObject(worldObject, Adminvision, Adminvision));
+            if (worldObject.Visibility && !Adminvision)
+                return;
+
+            Session.Network.EnqueueSend(new GameMessageCreateObject(worldObject, Adminvision, Adminvision));
 
             //Console.WriteLine($"Player {Name} - TrackObject({worldObject.Name})");
 
@@ -68,6 +68,9 @@ namespace ACE.Server.WorldObjects
                 foreach (var wieldedItem in creature.EquippedObjects.Values)
                     if (IsInChildLocation(wieldedItem))
                         TrackEquippedObject(creature, wieldedItem);
+
+                if (creature.IsMoving)
+                    creature.BroadcastMoveTo(this);
             }
         }
 
@@ -181,7 +184,7 @@ namespace ACE.Server.WorldObjects
             actionChain.EnqueueChain();
         }
 
-        public void Cloak()
+        public void HandleCloak()
         {
             if (CloakStatus == CloakStatus.On)
                 return;
