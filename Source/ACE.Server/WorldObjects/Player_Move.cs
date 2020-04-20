@@ -223,9 +223,8 @@ namespace ACE.Server.WorldObjects
                     break;
 
                 default:
-                    Session.Network.EnqueueSend(new GameEventAttackDone(Session));
-                    SendWeenieError(status);
 
+                    SendWeenieError(status);
                     HandleActionCancelAttack();
                     break;
             }
@@ -292,7 +291,7 @@ namespace ACE.Server.WorldObjects
             }
 
             // scale by bludgeon protection
-            var resistance = EnchantmentManager.GetResistanceMod(DamageType.Bludgeon);
+            var resistance = GetResistanceMod(DamageType.Bludgeon, null, null);
             var damage = (uint)Math.Round(amount * resistance);
 
             // update health

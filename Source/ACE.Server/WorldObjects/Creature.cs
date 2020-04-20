@@ -32,8 +32,8 @@ namespace ACE.Server.WorldObjects
             {
                 if (_questManager == null)
                 {
-                    if (!(this is Player))
-                        log.Debug($"Initializing non-player QuestManager for {Name} (0x{Guid})");   // verify this almost never happens
+                    /*if (!(this is Player))
+                        log.Debug($"Initializing non-player QuestManager for {Name} (0x{Guid})");*/
 
                     _questManager = new QuestManager(this);
                 }
@@ -112,12 +112,9 @@ namespace ACE.Server.WorldObjects
             {
                 GenerateWieldList();
 
-                if (!(this is CombatPet)) //combat pets normally wouldn't have these items, but due to subbing in code currently, sometimes they do. this skips them for now.
-                {
-                    GenerateWieldedTreasure();
+                GenerateWieldedTreasure();
 
-                    EquipInventoryItems();
-                }
+                EquipInventoryItems();
 
                 // TODO: fix tod data
                 Health.Current = Health.MaxValue;
@@ -131,6 +128,9 @@ namespace ACE.Server.WorldObjects
 
             selectedTargets = new Dictionary<uint, WorldObjectInfo>();
         }
+
+        // verify logic
+        public bool IsNPC => !(this is Player) && !Attackable && TargetingTactic == TargetingTactic.None;
 
         public void GenerateNewFace()
         {
