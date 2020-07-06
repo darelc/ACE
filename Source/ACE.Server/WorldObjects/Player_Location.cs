@@ -677,12 +677,12 @@ namespace ACE.Server.WorldObjects
 
         public void SendTeleportedViaMagicMessage(WorldObject itemCaster, Spell spell)
         {
-            if (itemCaster == null)
+            if (itemCaster == null || itemCaster is Gem)
                 Session.Network.EnqueueSend(new GameMessageSystemChat($"You have been teleported.", ChatMessageType.Magic));
             else if (this != itemCaster && !(itemCaster is Gem))
                 Session.Network.EnqueueSend(new GameMessageSystemChat($"{itemCaster.Name} teleports you with {spell.Name}.", ChatMessageType.Magic));
-            else if (itemCaster is Gem)
-                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.ITeleported));
+            //else if (itemCaster is Gem)
+            //    Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.ITeleported));
         }
 
         public void NotifyLandblocks()
@@ -744,6 +744,18 @@ namespace ACE.Server.WorldObjects
             0x9EE5,     // Northwatch Castle Black Market
             0xB5F0,     // Aerfalle's Sanctum
             0xF92F,     // Freebooter Keep Black Market
+            0x00B0,     // Colosseum Arena One
+            0x00B1,     // Colosseum Arena Two
+            0x00B2,     // Colosseum Arena Three
+            0x00B3,     // Colosseum Arena Four
+            0x00B4,     // Colosseum Arena Five
+            0x00B6,     // Colosseum Arena Mini-Bosses
+            0x5960,     // Gauntlet Arena One (Celestial Hand)
+            0x5961,     // Gauntlet Arena Two (Celestial Hand)
+            0x5962,     // Gauntlet Arena One (Eldritch Web)
+            0x5963,     // Gauntlet Arena Two (Eldritch Web)
+            0x5964,     // Gauntlet Arena One (Radiant Blood)
+            0x5965,     // Gauntlet Arena Two (Radiant Blood)
         };
 
         /// <summary>
