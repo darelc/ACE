@@ -470,7 +470,7 @@ namespace ACE.Server.WorldObjects
 
             if (equippedCloak != null && Cloak.HasDamageProc(equippedCloak) && Cloak.RollProc(equippedCloak, percent))
             {
-                var reducedAmount = Cloak.GetReducedAmount(amount);
+                var reducedAmount = Cloak.GetReducedAmount(source, amount);
 
                 Cloak.ShowMessage(this, source, amount, reducedAmount);
 
@@ -846,7 +846,7 @@ namespace ACE.Server.WorldObjects
             // http://acpedia.org/wiki/Announcements_-_11th_Anniversary_Preview#Void_Magic_and_You.21
             // Creatures under Asheron’s protection take half damage from any nether type spell.
             if (damageType == DamageType.Nether)
-                return (float)PropertyManager.GetDouble("void_pvp_modifier").Item;
+                return 0.5f;
 
             // base strength and endurance give the player a natural resistance to damage,
             // which caps at 50% (equivalent to level 5 life prots)
