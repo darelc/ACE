@@ -9,32 +9,32 @@ namespace ACE.Server.Factories.Tables
     {
         // indexed by TreasureDeath.MundaneItemTypeSelectionChances
 
-        private static readonly ChanceTable<TreasureItemType_Orig> mundaneProfile1 = new ChanceTable<TreasureItemType_Orig>()
+        private static ChanceTable<TreasureItemType_Orig> mundaneProfile1 = new ChanceTable<TreasureItemType_Orig>()
         {
             ( TreasureItemType_Orig.Consumable,     1.0f ),
         };
 
-        private static readonly ChanceTable<TreasureItemType_Orig> mundaneProfile2 = new ChanceTable<TreasureItemType_Orig>()
+        private static ChanceTable<TreasureItemType_Orig> mundaneProfile2 = new ChanceTable<TreasureItemType_Orig>()
         {
             ( TreasureItemType_Orig.HealKit,        1.0f ),
         };
 
-        private static readonly ChanceTable<TreasureItemType_Orig> mundaneProfile3 = new ChanceTable<TreasureItemType_Orig>()
+        private static ChanceTable<TreasureItemType_Orig> mundaneProfile3 = new ChanceTable<TreasureItemType_Orig>()
         {
             ( TreasureItemType_Orig.Lockpick,       1.0f ),
         };
 
-        private static readonly ChanceTable<TreasureItemType_Orig> mundaneProfile4 = new ChanceTable<TreasureItemType_Orig>()
+        private static ChanceTable<TreasureItemType_Orig> mundaneProfile4 = new ChanceTable<TreasureItemType_Orig>()
         {
             ( TreasureItemType_Orig.SpellComponent, 1.0f ),
         };
 
-        private static readonly ChanceTable<TreasureItemType_Orig> mundaneProfile5 = new ChanceTable<TreasureItemType_Orig>()
+        private static ChanceTable<TreasureItemType_Orig> mundaneProfile5 = new ChanceTable<TreasureItemType_Orig>()
         {
             ( TreasureItemType_Orig.ManaStone,      1.0f ),
         };
 
-        private static readonly ChanceTable<TreasureItemType_Orig> mundaneProfile6 = new ChanceTable<TreasureItemType_Orig>()
+        private static ChanceTable<TreasureItemType_Orig> mundaneProfile6 = new ChanceTable<TreasureItemType_Orig>()
         {
             ( TreasureItemType_Orig.Pyreal,         1.0f ),
         };
@@ -42,7 +42,7 @@ namespace ACE.Server.Factories.Tables
         /// <summary>
         /// The most common MundaneItem profile
         /// </summary>
-        private static readonly ChanceTable<TreasureItemType_Orig> mundaneProfile7 = new ChanceTable<TreasureItemType_Orig>()
+        private static ChanceTable<TreasureItemType_Orig> mundaneProfile7 = new ChanceTable<TreasureItemType_Orig>()
         {
             ( TreasureItemType_Orig.Pyreal,         0.17f ),
             ( TreasureItemType_Orig.Consumable,     0.17f ),
@@ -55,7 +55,7 @@ namespace ACE.Server.Factories.Tables
         /// <summary>
         /// The second most common MundaneItem profile
         /// </summary>
-        private static readonly ChanceTable<TreasureItemType_Orig> mundaneProfile8 = new ChanceTable<TreasureItemType_Orig>()
+        private static ChanceTable<TreasureItemType_Orig> mundaneProfile8 = new ChanceTable<TreasureItemType_Orig>()
         {
             ( TreasureItemType_Orig.Pyreal,         0.34f ),
             ( TreasureItemType_Orig.SpellComponent, 0.33f ),
@@ -80,13 +80,13 @@ namespace ACE.Server.Factories.Tables
         /// <summary>
         /// Rolls for a TreasureItemType for a TreasureItemCategory.MundaneItem
         /// </summary>
-        /// <param name="mundaneProfileIdx">From TreasureDeath.MundaneItemTypeSelectionChances</param>
-        public static TreasureItemType_Orig Roll(int mundaneProfileIdx)
+        /// <param name="mundaneProfile">From TreasureDeath.MundaneItemTypeSelectionChances</param>
+        public static TreasureItemType_Orig Roll(int mundaneProfile)
         {
-            if (mundaneProfileIdx < 1 || mundaneProfileIdx > mundaneProfiles.Count)
+            if (mundaneProfile < 1 || mundaneProfile > mundaneProfiles.Count)
                 return TreasureItemType_Orig.Undef;
 
-            return mundaneProfiles[mundaneProfileIdx - 1].Roll();
+            return mundaneProfiles[mundaneProfile - 1].Roll();
         }
     }
 }

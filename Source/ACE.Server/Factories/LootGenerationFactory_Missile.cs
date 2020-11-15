@@ -3,6 +3,7 @@ using System.Linq;
 using ACE.Common;
 using ACE.Database.Models.World;
 using ACE.Entity.Enum;
+using ACE.Server.Entity;
 using ACE.Server.Factories.Entity;
 using ACE.Server.Factories.Enum;
 using ACE.Server.Factories.Tables;
@@ -19,7 +20,7 @@ namespace ACE.Server.Factories
         {
             int weaponWeenie;
 
-            int wieldDifficulty = RollWieldDifficulty(profile.Tier, WieldType.MissileWeapon);
+            int wieldDifficulty = RollWieldDifficulty(profile.Tier, TreasureWeaponType.MissileWeapon);
 
             // Changing based on wield, not tier. Refactored, less code, best results.  HarliQ 11/18/19
             if (wieldDifficulty < 315)
@@ -97,9 +98,9 @@ namespace ACE.Server.Factories
             }
 
             // material type
-            int materialType = GetMaterialType(wo, profile.Tier);
+            var materialType = GetMaterialType(wo, profile.Tier);
             if (materialType > 0)
-                wo.MaterialType = (MaterialType)materialType;
+                wo.MaterialType = materialType;
 
             // item color
             MutateColor(wo);
@@ -113,20 +114,14 @@ namespace ACE.Server.Factories
             wo.GemType = RollGemType(profile.Tier);
 
             // workmanship
-            wo.ItemWorkmanship = GetWorkmanship(profile.Tier);
+            wo.ItemWorkmanship = WorkmanshipChance.Roll(profile.Tier);
 
             // burden
             MutateBurden(wo, profile, true);
 
-            // item value
-            var materialMod = LootTables.getMaterialValueModifier(wo);
-            var gemMaterialMod = LootTables.getGemMaterialValueModifier(wo);
-
-            wo.Value = GetValue(profile.Tier, (int)wo.Workmanship, gemMaterialMod, materialMod);
-
             // missile / magic defense
-            wo.WeaponMissileDefense = RollWeapon_MissileMagicDefense(profile.Tier);
-            wo.WeaponMagicDefense = RollWeapon_MissileMagicDefense(profile.Tier);
+            wo.WeaponMissileDefense = MissileMagicDefense.Roll(profile.Tier);
+            wo.WeaponMagicDefense = MissileMagicDefense.Roll(profile.Tier);
 
             // spells
             if (!isMagical)
@@ -140,6 +135,10 @@ namespace ACE.Server.Factories
             }
             else
                 AssignMagic(wo, profile, roll);
+
+            // item value
+            //if (wo.HasMutateFilter(MutateFilter.Value))   // fixme: data
+                MutateValue(wo, profile.Tier, roll);
 
             // long description
             wo.LongDesc = GetLongDesc(wo);

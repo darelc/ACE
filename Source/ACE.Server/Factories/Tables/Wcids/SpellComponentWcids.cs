@@ -9,39 +9,39 @@ namespace ACE.Server.Factories.Tables.Wcids
 {
     public static class SpellComponentWcids
     {
-        private static readonly ChanceTable<WeenieClassName> T1_Chances = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> T1_Chances = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.peascarablead,   1.00f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> T2_Chances = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> T2_Chances = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.peascarablead,   0.50f ),
             ( WeenieClassName.peascarabiron,   0.50f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> T3_Chances = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> T3_Chances = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.peascarablead,   0.25f ),
             ( WeenieClassName.peascarabiron,   0.50f ),
             ( WeenieClassName.peascarabcopper, 0.25f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> T4_Chances = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> T4_Chances = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.peascarabiron,   0.25f ),
             ( WeenieClassName.peascarabcopper, 0.50f ),
             ( WeenieClassName.peascarabsilver, 0.25f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> T5_Chances = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> T5_Chances = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.peascarabcopper, 0.25f ),
             ( WeenieClassName.peascarabsilver, 0.50f ),
             ( WeenieClassName.peascarabgold,   0.25f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> T6_T8_Chances = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> T6_T8_Chances = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.peascarabsilver, 0.25f ),
             ( WeenieClassName.peascarabgold,   0.50f ),
@@ -60,17 +60,23 @@ namespace ACE.Server.Factories.Tables.Wcids
             T6_T8_Chances,
         };
 
+        // level 8 spell components have a chance of dropping in t7 / t8
+        private static ChanceTable<bool> level8SpellComponentChance = new ChanceTable<bool>()
+        {
+            ( false, 0.6f ),
+            ( true,  0.4f ),
+        };
+
         public static WeenieClassName Roll(TreasureDeath profile)
         {
             // possible retail bug: peas not dropping in t6 / t7??
             if (profile.Tier >= 7)
             {
-                // using retail t8 profile here:
-                // - 60% peas
-                // - 40% level 8 spell comps
-                var rng = ThreadSafeRandom.Next(0.0f, 1.0f);
+                // loot quality mod?
+                // this could be helpful for mana forge chests -- did they drop peas?
+                var level8SpellComponent = level8SpellComponentChance.Roll(profile.LootQualityMod);
 
-                if (rng < 0.4f)
+                if (level8SpellComponent)
                     return Roll_Level8SpellComponent(profile);
             }
 
@@ -79,7 +85,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             return table.Roll(profile.LootQualityMod);
         }
 
-        private static readonly ChanceTable<WeenieClassName> Quills = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> Quills = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.ace37363_quillofinfliction,    0.50f ),   // war/debuff (other)
             ( WeenieClassName.ace37364_quillofintrospection, 0.35f ),   // beneficial (self)
@@ -87,7 +93,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace37362_quillofextraction,    0.05f ),   // drain (other)
         };
 
-        private static readonly ChanceTable<WeenieClassName> Inks = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> Inks = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.ace37353_inkofformation,       0.30f ),   // self (can only be used with introspection quills)
             ( WeenieClassName.ace37360_inkofconveyance,      0.24f ),   // other (can only be used with benevolence, infliction, and extraction quills)

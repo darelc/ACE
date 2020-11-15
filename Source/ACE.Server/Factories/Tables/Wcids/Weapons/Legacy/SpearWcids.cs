@@ -1,5 +1,5 @@
-using ACE.Entity.Enum;
 using ACE.Server.Factories.Entity;
+using ACE.Server.Factories.Enum;
 
 using WeenieClassName = ACE.Server.Factories.Enum.WeenieClassName;
 
@@ -7,7 +7,7 @@ namespace ACE.Server.Factories.Tables.Wcids
 {
     public static class SpearWcids
     {
-        private static readonly ChanceTable<WeenieClassName> SpearWcids_Aluvian = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> SpearWcids_Aluvian = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.spear,              0.16f ),
             ( WeenieClassName.spearacid,          0.04f ),
@@ -26,7 +26,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.swordstafffrost,    0.05f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> SpearWcids_Gharundim = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> SpearWcids_Gharundim = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.budiaq,             0.16f ),
             ( WeenieClassName.budiaqacid,         0.04f ),
@@ -45,7 +45,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.swordstafffrost,    0.05f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> SpearWcids_Sho = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> SpearWcids_Sho = new ChanceTable<WeenieClassName>()
         {
             ( WeenieClassName.yari,               0.16f ),
             ( WeenieClassName.yariacid,           0.04f ),
@@ -64,17 +64,17 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.swordstafffrost,    0.05f ),
         };
 
-        public static WeenieClassName Roll(HeritageGroup heritage)
+        public static WeenieClassName Roll(TreasureHeritageGroup heritage)
         {
             switch (heritage)
             {
-                case HeritageGroup.Aluvian:
+                case TreasureHeritageGroup.Aluvian:
                     return SpearWcids_Aluvian.Roll();
 
-                case HeritageGroup.Gharundim:
+                case TreasureHeritageGroup.Gharundim:
                     return SpearWcids_Gharundim.Roll();
 
-                case HeritageGroup.Sho:
+                case TreasureHeritageGroup.Sho:
                     return SpearWcids_Sho.Roll();
             }
             return WeenieClassName.undef;
