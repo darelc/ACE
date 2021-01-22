@@ -181,6 +181,8 @@ namespace ACE.Server
             // This should only be enabled manually. To enable it, simply uncomment this line
             //ACE.Database.OfflineTools.Shard.BiotaGuidConsolidator.ConsolidateBiotaGuids(0xC0000000, out int numberOfBiotasConsolidated, out int numberOfErrors);
 
+            ShardDatabaseOfflineTools.CheckForBiotaPropertiesPaletteOrderColumnInShard();
+
             log.Info("Initializing ServerManager...");
             ServerManager.Initialize();
 
@@ -189,6 +191,13 @@ namespace ACE.Server
 
             log.Info("Initializing DatabaseManager...");
             DatabaseManager.Initialize();
+
+            if (DatabaseManager.InitializationFailure)
+            {
+                log.Fatal("DatabaseManager initialization failed. ACEmulator will now abort startup.");
+                ServerManager.StartupAbort();
+                Environment.Exit(0);
+            }
 
             log.Info("Starting DatabaseManager...");
             DatabaseManager.Start();

@@ -256,7 +256,7 @@ namespace ACE.Database
         {
             var query = from weenieRecord in context.Weenie
                         join stringProperty in context.WeeniePropertiesString on weenieRecord.ClassId equals stringProperty.ObjectId
-                        where weenieRecord.Type == (int)WeenieType.Creature && stringProperty.Type == (ushort)PropertyString.Name && stringProperty.Value.ToLowerInvariant() == name.ToLowerInvariant()
+                        where weenieRecord.Type == (int)WeenieType.Creature && stringProperty.Type == (ushort)PropertyString.Name && stringProperty.Value.Equals(name, StringComparison.InvariantCultureIgnoreCase)
                         select weenieRecord;
 
             var weenie = query
@@ -1039,6 +1039,11 @@ namespace ACE.Database
                 cachedWieldedTreasure[dataId] = results;
                 return results;
             }
+        }
+
+        public void ClearWieldedTreasureCache()
+        {
+            cachedWieldedTreasure.Clear();
         }
     }
 }

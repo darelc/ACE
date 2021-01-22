@@ -903,7 +903,7 @@ namespace ACE.Server.Command.Handlers
             "@teleloc follows the same number order as displayed from @loc output\n" +
             "Example: @teleloc 0x7F0401AD [12.319900 -28.482000 0.005000] -0.338946 0.000000 0.000000 -0.940806\n" +
             "Example: @teleloc 0x7F0401AD 12.319900 -28.482000 0.005000 -0.338946 0.000000 0.000000 -0.940806\n" +
-            "Example: @teleloc 7F0401AD 12.319900 - 28.482000 0.005000")]
+            "Example: @teleloc 7F0401AD 12.319900 -28.482000 0.005000")]
         public static void HandleTeleportLOC(Session session, params string[] parameters)
         {
             try
@@ -921,6 +921,15 @@ namespace ACE.Server.Command.Handlers
                 var positionData = new float[7];
                 for (uint i = 0u; i < 7u; i++)
                 {
+                    if (i > 2 && parameters.Length < 8)
+                    {
+                        positionData[3] = 1;
+                        positionData[4] = 0;
+                        positionData[5] = 0;
+                        positionData[6] = 0;
+                        break;
+                    }
+
                     if (!float.TryParse(parameters[i + 1].Trim(new Char[] { ' ', '[', ']' }), out var position))
                         return;
 
@@ -3038,7 +3047,7 @@ namespace ACE.Server.Command.Handlers
             var item = CommandHandlerHelper.GetLastAppraisedObject(session);
             if (item == null) return;
 
-            var enchantments = item.Biota.PropertiesEnchantmentRegistry.GetEnchantmentsTopLayer(item.BiotaDatabaseLock);
+            var enchantments = item.Biota.PropertiesEnchantmentRegistry.GetEnchantmentsTopLayer(item.BiotaDatabaseLock, SpellSet.SetSpells);
 
             foreach (var enchantment in enchantments)
             {
@@ -3053,7 +3062,7 @@ namespace ACE.Server.Command.Handlers
         public static void HandleCM(Session session, params string[] parameters)
         {
             // Format is: @cm <material type> <quantity> <ave. workmanship>
-            HandleCISalvage(session);
+            HandleCISalvage(session, parameters);
         }
 
         [CommandHandler("cisalvage", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1, "Create a salvage bag in your inventory", "<material_type>, optional: <structure> <workmanship> <num_items>")]
