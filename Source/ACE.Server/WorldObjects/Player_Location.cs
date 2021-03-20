@@ -53,7 +53,7 @@ namespace ACE.Server.WorldObjects
 
         public bool TooBusyToRecall
         {
-            get => IsBusy || Teleporting || suicideInProgress;
+            get => IsBusy || suicideInProgress;     // recalls could be started from portal space?
         }
 
         public void HandleActionTeleToHouse()
@@ -714,7 +714,8 @@ namespace ACE.Server.WorldObjects
 
             // set materialize physics state
             // this takes the player from pink bubbles -> fully materialized
-            ReportCollisions = true;
+            if (CloakStatus != CloakStatus.On)
+                ReportCollisions = true;
             IgnoreCollisions = false;
             Hidden = false;
             Teleporting = false;
@@ -812,8 +813,10 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Called when a player first logs in
         /// </summary>
-        public static void HandleNoLogLandblock(Biota biota)
+        public static void HandleNoLogLandblock(Biota biota, out bool playerWasMovedFromNoLogLandblock)
         {
+            playerWasMovedFromNoLogLandblock = false;
+
             if (biota.WeenieType == WeenieType.Sentinel || biota.WeenieType == WeenieType.Admin) return;
 
             if (!biota.PropertiesPosition.TryGetValue(PositionType.Location, out var location))
@@ -835,6 +838,10 @@ namespace ACE.Server.WorldObjects
             location.RotationY = lifestone.RotationY;
             location.RotationZ = lifestone.RotationZ;
             location.RotationW = lifestone.RotationW;
+
+            playerWasMovedFromNoLogLandblock = true;
+
+            return;
         }
     }
 }

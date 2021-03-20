@@ -462,7 +462,7 @@ namespace ACE.Server.WorldObjects.Managers
 
                 case EmoteType.InqEvent:
 
-                    var started = EventManager.IsEventStarted(emote.Message);
+                    var started = EventManager.IsEventStarted(emote.Message, WorldObject, targetObject);
                     ExecuteEmoteSet(started ? EmoteCategory.EventSuccess : EmoteCategory.EventFailure, emote.Message, targetObject, true);
                     break;
 
@@ -555,6 +555,7 @@ namespace ACE.Server.WorldObjects.Managers
                         var numRequired = emote.StackSize ?? 1;
 
                         var items = player.GetInventoryItemsOfWCID(emote.WeenieClassId ?? 0);
+                        items.AddRange(player.GetEquippedObjectsOfWCID(emote.WeenieClassId ?? 0));
                         var numItems = items.Sum(i => i.StackSize ?? 1);
 
                         success = numItems >= numRequired;
@@ -1241,12 +1242,12 @@ namespace ACE.Server.WorldObjects.Managers
 
                 case EmoteType.StartEvent:
 
-                    EventManager.StartEvent(emote.Message);
+                    EventManager.StartEvent(emote.Message, WorldObject, targetObject);
                     break;
 
                 case EmoteType.StopEvent:
 
-                    EventManager.StopEvent(emote.Message);
+                    EventManager.StopEvent(emote.Message, WorldObject, targetObject);
                     break;
 
                 case EmoteType.TakeItems:
@@ -1268,7 +1269,8 @@ namespace ACE.Server.WorldObjects.Managers
                             break;
                         }
 
-                        if (player.GetNumInventoryItemsOfWCID(weenieItemToTake) > 0 && player.TryConsumeFromInventoryWithNetworking(weenieItemToTake, amountToTake == -1 ? int.MaxValue : amountToTake))
+                        if ((player.GetNumInventoryItemsOfWCID(weenieItemToTake) > 0 && player.TryConsumeFromInventoryWithNetworking(weenieItemToTake, amountToTake == -1 ? int.MaxValue : amountToTake))
+                            || (player.GetNumEquippedObjectsOfWCID(weenieItemToTake) > 0 && player.TryConsumeFromEquippedObjectsWithNetworking(weenieItemToTake, amountToTake == -1 ? int.MaxValue : amountToTake)))
                         {
                             var itemTaken = DatabaseManager.World.GetCachedWeenie(weenieItemToTake);
                             if (itemTaken != null)
