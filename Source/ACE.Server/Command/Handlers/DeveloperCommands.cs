@@ -21,6 +21,7 @@ using ACE.Entity.Models;
 using ACE.Server.Entity;
 using ACE.Server.Entity.Actions;
 using ACE.Server.Factories;
+using ACE.Server.Factories.Enum;
 using ACE.Server.Managers;
 using ACE.Server.Network;
 using ACE.Server.Network.GameEvent.Events;
@@ -2151,12 +2152,15 @@ namespace ACE.Server.Command.Handlers
         {
             var landblock = session.Player.Location.Landblock;
 
+            var blockStart = landblock << 16;
+            var blockEnd = blockStart | 0xFFFF;
+
             using (var ctx = new WorldDbContext())
             {
                 var query = from weenie in ctx.Weenie
                             join wstr in ctx.WeeniePropertiesString on weenie.ClassId equals wstr.ObjectId
                             join wpos in ctx.WeeniePropertiesPosition on weenie.ClassId equals wpos.ObjectId
-                            where weenie.Type == (int)WeenieType.Portal && wpos.PositionType == (int)PositionType.Destination && wpos.ObjCellId >> 16 == landblock
+                            where weenie.Type == (int)WeenieType.Portal && wpos.PositionType == (int)PositionType.Destination && wpos.ObjCellId >= blockStart && wpos.ObjCellId <= blockEnd
                             select wstr;
 
                 var results = query.ToList();
@@ -2308,12 +2312,14 @@ namespace ACE.Server.Command.Handlers
             TreasureDeath profile = new TreasureDeath
             {
                 Tier = tier,
-                LootQualityMod = 0
+                LootQualityMod = 0,
+                MagicItemTreasureTypeSelectionChances = 9,  // 8 or 9?
             };
 
             for (var i = 0; i < numItems; i++)
             {
-                var wo = LootGenerationFactory.CreateRandomLootObjects(profile, true);
+                //var wo = LootGenerationFactory.CreateRandomLootObjects(profile, true);
+                var wo = LootGenerationFactory.CreateRandomLootObjects_New(profile, TreasureItemCategory.MagicItem);
                 if (wo != null)
                     session.Player.TryCreateInInventoryWithNetworking(wo);
                 else
